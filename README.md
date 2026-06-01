@@ -101,3 +101,4 @@
 | flourite-v-oss | POCO M8 Pro 5G / REDMI Note 15 Pro+ / REDMI Note 15 Pro+ 5G Pro | Android V | LA.VENDOR.14.3.0.r1-14500-r1.0.r1_00042.0 |[flourite-v-oss](https://github.com/MiCode/vendor_qcom_opensource_wlan/tree/flourite-v-oss) |
 | yupei-w-oss | Xiaomi Pad 8 | Android W | LA.VENDOR.15.4.0.r1-15000-r1.0.r1_00044.1 |[yupei-w-oss](https://github.com/MiCode/vendor_qcom_opensource_wlan/tree/yupei-w-oss) |
 | piano-w-oss | Xiaomi Pad 8 Pro | Android W | LA.VENDOR.15.4.0.r1-15000-r1.0.r1_00044.1 |[piano-w-oss](https://github.com/MiCode/vendor_qcom_opensource_wlan/tree/piano-w-oss) |
+| frost-r-oss | POCO C40 | Android R | JR510_R_V0.5.6.R3.B0005.7-0297 |[frost-r-oss](https://github.com/MiCode/vendor_qcom_opensource_wlan/tree/frost-r-oss) |
