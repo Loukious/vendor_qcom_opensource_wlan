@@ -104,3 +104,4 @@
 | frost-r-oss | POCO C40 | Android R | JR510_R_V0.5.6.R3.B0005.7-0297 |[frost-r-oss](https://github.com/MiCode/vendor_qcom_opensource_wlan/tree/frost-r-oss) |
 | sunstone-u-oss | Redmi Note 12 5G / Redmi Note 12 5G / Redmi Note 12R | Android U | Snapdragon_Mid_2021.SPF.2.0 r2.0.c3_00004.3.145544.1 |[sunstone-u-oss](https://github.com/MiCode/vendor_qcom_opensource_wlan/tree/sunstone-u-oss) |
 | guitar-w-oss | REDMI Pad 2 SE | Android W | snapdragon-mid-2022-spf-2-0-2_00004.0 |[guitar-w-oss](https://github.com/MiCode/vendor_qcom_opensource_wlan/tree/guitar-w-oss) |
+| erhu-w-oss | REDMI Pad 2 SE 4G | Android W | snapdragon-mid-2022-spf-2-0-2_00004.0 |[erhu-w-oss](https://github.com/MiCode/vendor_qcom_opensource_wlan/tree/erhu-w-oss) |
