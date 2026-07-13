@@ -1366,6 +1366,12 @@ wma_mgmt_tx_ack_comp_hdlr(void *wma_context, qdf_nbuf_t netbuf, int32_t status)
 	uint8_t vdev_id;
 
 	desc_id = QDF_NBUF_CB_MGMT_TXRX_DESC_ID(netbuf);
+#ifdef FEATURE_FRAME_INJECTION_SUPPORT
+	if (desc_id == WMA_MGMT_TX_INJECTION_DESC_ID) {
+		qdf_nbuf_free(netbuf);
+		return;
+	}
+#endif
 	vdev_id = mgmt_txrx_get_vdev_id(pdev, desc_id);
 
 	mgmt_params.vdev_id = vdev_id;
@@ -1390,6 +1396,12 @@ wma_mgmt_tx_dload_comp_hldr(void *wma_context, qdf_nbuf_t netbuf,
 
 	tp_wma_handle wma_handle = (tp_wma_handle) wma_context;
 	void *mac_context = wma_handle->mac_context;
+
+#ifdef FEATURE_FRAME_INJECTION_SUPPORT
+	if (QDF_NBUF_CB_MGMT_TXRX_DESC_ID(netbuf) ==
+	    WMA_MGMT_TX_INJECTION_DESC_ID)
+		return;
+#endif
 
 	wma_debug("Tx Complete Status %d", status);
 

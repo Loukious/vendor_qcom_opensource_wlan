@@ -39,6 +39,8 @@
 
 typedef void *WMA_HANDLE;
 
+#define WMA_MGMT_TX_INJECTION_DESC_ID 0xffff
+
 /**
  * enum GEN_PARAM - general parameters
  * @GEN_VDEV_PARAM_AMPDU: Set ampdu size

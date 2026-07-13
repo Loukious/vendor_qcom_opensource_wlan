@@ -36,7 +36,7 @@ int hdd_enable_monitor_mode(struct net_device *dev)
 	hdd_enter_dev(dev);
 
 	vdev_id = cdp_get_mon_vdev_from_pdev(soc, OL_TXRX_PDEV_ID);
-	if (vdev_id < 0)
+	if (vdev_id == (uint8_t)-EINVAL)
 		return -EINVAL;
 
 	return cdp_set_monitor_mode(soc, vdev_id, false);
