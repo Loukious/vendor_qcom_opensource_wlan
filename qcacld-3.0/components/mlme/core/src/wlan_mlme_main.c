@@ -48,6 +48,22 @@
 #define MLME_GET_CHAN_STATS_PASSIVE_SCAN_TIME 40
 #define MLME_GET_CHAN_STATS_WIDE_BAND_PASSIVE_SCAN_TIME 110
 
+#define XIAOMI_HW_PLATFORM_2G_5G_ONLY 3
+#define XIAOMI_HW_COUNTRY_CN 0
+
+extern int get_hw_version_platform(void);
+extern int get_hw_country_version(void);
+
+static inline bool mlme_xiaomi_hw_is_2g_5g_only(void)
+{
+	return get_hw_version_platform() == XIAOMI_HW_PLATFORM_2G_5G_ONLY;
+}
+
+static inline bool mlme_xiaomi_hw_is_cn_build(void)
+{
+	return get_hw_country_version() == XIAOMI_HW_COUNTRY_CN;
+}
+
 struct wlan_mlme_rx_ops *
 mlme_get_rx_ops(struct wlan_objmgr_psoc *psoc)
 {
@@ -1366,8 +1382,12 @@ static void mlme_init_generic_cfg(struct wlan_objmgr_psoc *psoc,
 		cfg_get(psoc, CFG_ENABLE_RTT_MAC_RANDOMIZATION);
 	gen->band_capability =
 		cfg_get(psoc, CFG_BAND_CAPABILITY);
-	if (!gen->band_capability)
+	if (mlme_xiaomi_hw_is_2g_5g_only()) {
+		mlme_debug("replace ini BandCapability=3, support both 2.4G and 5G");
+		gen->band_capability = BIT(REG_BAND_2G) | BIT(REG_BAND_5G);
+	} else if (!gen->band_capability) {
 		gen->band_capability = REG_BAND_MASK_ALL;
+	}
 	gen->band = gen->band_capability;
 	gen->select_5ghz_margin =
 		cfg_get(psoc, CFG_SELECT_5GHZ_MARGIN);
@@ -1608,6 +1628,10 @@ mlme_init_qos_edca_params(struct wlan_objmgr_psoc *psoc,
 {
 	edca_params->enable_edca_params =
 			cfg_get(psoc, CFG_EDCA_ENABLE_PARAM);
+	if (!mlme_xiaomi_hw_is_cn_build()) {
+		mlme_debug("set enable_edca_params 0 due to not CN build");
+		edca_params->enable_edca_params = false;
+	}
 
 	edca_params->enable_wmm_txop =
 			cfg_get(psoc, CFG_ENABLE_WMM_TXOP);
@@ -3544,6 +3568,10 @@ static void mlme_init_wifi_pos_cfg(struct wlan_objmgr_psoc *psoc,
 		cfg_get(psoc, CFG_FINE_TIME_MEAS_CAPABILITY);
 	wifi_pos_cfg->oem_6g_support_disable =
 		cfg_get(psoc, CFG_OEM_SIXG_SUPPORT_DISABLE);
+	if (mlme_xiaomi_hw_is_2g_5g_only()) {
+		mlme_debug("replace ini oem_6g_support_disable=1");
+		wifi_pos_cfg->oem_6g_support_disable = true;
+	}
 	mlme_init_wifi_pos_11az_config(psoc, wifi_pos_cfg);
 }
 

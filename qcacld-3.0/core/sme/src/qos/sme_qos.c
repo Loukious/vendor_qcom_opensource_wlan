@@ -390,7 +390,7 @@ static QDF_STATUS sme_qos_update_params(uint8_t sessionId,
 				      struct sme_qos_wmmtspecinfo *pTspec_Info);
 static enum qca_wlan_ac_type sme_qos_up_to_ac(enum sme_qos_wmmuptype up);
 
-static bool
+static inline bool
 sme_qos_is_acm(struct mac_context *mac, struct bss_description *pSirBssDesc,
 	       enum qca_wlan_ac_type ac, tDot11fBeaconIEs *pIes);
 
@@ -976,13 +976,16 @@ QDF_STATUS sme_qos_csr_event_ind(struct mac_context *mac,
 uint8_t sme_qos_get_acm_mask(struct mac_context *mac, struct bss_description
 				*pSirBssDesc, tDot11fBeaconIEs *pIes)
 {
-	enum qca_wlan_ac_type ac;
 	uint8_t acm_mask = 0;
 
-	for (ac = QCA_WLAN_AC_BE; ac < QCA_WLAN_AC_ALL; ac++) {
-		if (sme_qos_is_acm(mac, pSirBssDesc, ac, pIes))
-			acm_mask = acm_mask | (1 << (QCA_WLAN_AC_VO - ac));
-	}
+	if (sme_qos_is_acm(mac, pSirBssDesc, QCA_WLAN_AC_BE, pIes))
+		acm_mask |= 1 << (QCA_WLAN_AC_VO - QCA_WLAN_AC_BE);
+	if (sme_qos_is_acm(mac, pSirBssDesc, QCA_WLAN_AC_BK, pIes))
+		acm_mask |= 1 << (QCA_WLAN_AC_VO - QCA_WLAN_AC_BK);
+	if (sme_qos_is_acm(mac, pSirBssDesc, QCA_WLAN_AC_VI, pIes))
+		acm_mask |= 1 << (QCA_WLAN_AC_VO - QCA_WLAN_AC_VI);
+	if (sme_qos_is_acm(mac, pSirBssDesc, QCA_WLAN_AC_VO, pIes))
+		acm_mask |= 1 << (QCA_WLAN_AC_VO - QCA_WLAN_AC_VO);
 
 	return acm_mask;
 }
@@ -5668,7 +5671,7 @@ static QDF_STATUS sme_qos_find_all_in_flow_list(struct mac_context *mac_ctx,
  *
  * Return true if the AC mandates Admission Control
  */
-static bool
+static inline bool
 sme_qos_is_acm(struct mac_context *mac, struct bss_description *pSirBssDesc,
 	       enum qca_wlan_ac_type ac, tDot11fBeaconIEs *pIes)
 {
@@ -5681,7 +5684,7 @@ sme_qos_is_acm(struct mac_context *mac, struct bss_description *pSirBssDesc,
 	else {
 		/* IEs were not provided so parse them ourselves */
 		if (!QDF_IS_STATUS_SUCCESS
-			    (csr_get_parsed_bss_description_ies
+			    (wlan_get_parsed_bss_description_ies
 				    (mac, pSirBssDesc, &pIesLocal))) {
 			/* err msg */
 			sme_err("csr_get_parsed_bss_description_ies() failed");

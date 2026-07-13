@@ -2510,7 +2510,7 @@ QDF_STATUS sap_populate_peer_assoc_info(struct mac_context *mac_ctx,
 }
 
 #ifdef WLAN_FEATURE_11BE_MLO
-static void
+static noinline void
 sap_reassoc_mld_copy(struct csr_roam_info *csr_roaminfo,
 		     tSap_StationAssocReassocCompleteEvent *reassoc_complete)
 {

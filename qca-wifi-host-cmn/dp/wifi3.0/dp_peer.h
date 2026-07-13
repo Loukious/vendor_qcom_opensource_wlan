@@ -2008,7 +2008,7 @@ uint16_t dp_get_link_peer_id_by_lmac_id(struct dp_soc *soc, uint16_t peer_id,
  * Return: peer in success
  *         NULL in failure
  */
-static inline
+static noinline
 struct dp_peer *dp_peer_get_tgt_peer_hash_find(struct dp_soc *soc,
 					       uint8_t *peer_mac,
 					       int mac_addr_is_aligned,

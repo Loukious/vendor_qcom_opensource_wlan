@@ -656,6 +656,14 @@ static inline void
 ucfg_pmo_dynamic_arp_ns_offload_runtime_allow(struct wlan_objmgr_vdev *vdev) {}
 #endif
 
+bool
+ucfg_pmo_get_ns_offload_enable_dynamic(struct wlan_objmgr_vdev *vdev);
+
+void
+ucfg_pmo_set_ns_offload_enable_dynamic(struct wlan_objmgr_vdev *vdev,
+				       enum pmo_offload_trigger trigger,
+				       bool enable);
+
 /**
  * ucfg_pmo_enable_mc_addr_filtering_in_fwr(): Enable cached mc add list in fwr
  * @psoc: objmgr psoc handle

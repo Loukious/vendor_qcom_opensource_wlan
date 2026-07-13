@@ -26,7 +26,7 @@
 /* arbitrary value */
 #define MAX_NUM_REQUESTS 20
 
-static bool is_initialized;
+bool osif_request_manager_is_initialized;
 static qdf_list_t requests;
 static qdf_spinlock_t spinlock;
 static void *cookie;
@@ -82,7 +82,7 @@ struct osif_request *osif_request_alloc(const struct osif_request_params *params
 	size_t length;
 	struct osif_request *request;
 
-	if (!is_initialized) {
+	if (!osif_request_manager_is_initialized) {
 		osif_err("invoked when not initialized");
 		return NULL;
 	}
@@ -118,7 +118,7 @@ struct osif_request *osif_request_get(void *cookie)
 {
 	struct osif_request *request;
 
-	if (!is_initialized) {
+	if (!osif_request_manager_is_initialized) {
 		osif_err("invoked when not initialized");
 		return NULL;
 	}
@@ -163,12 +163,12 @@ void osif_request_complete(struct osif_request *request)
 
 void osif_request_manager_init(void)
 {
-	if (is_initialized)
+	if (osif_request_manager_is_initialized)
 		return;
 
 	qdf_list_create(&requests, MAX_NUM_REQUESTS);
 	qdf_spinlock_create(&spinlock);
-	is_initialized = true;
+	osif_request_manager_is_initialized = true;
 }
 
 /*
@@ -180,5 +180,5 @@ void osif_request_manager_init(void)
  */
 void osif_request_manager_deinit(void)
 {
-	is_initialized = false;
+	osif_request_manager_is_initialized = false;
 }

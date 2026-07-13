@@ -6461,6 +6461,13 @@ enum qca_wlan_vendor_attr_config {
 	 * 0 - STA uses internal scoring algorithm to select a roam candidate
 	 */
 	QCA_WLAN_VENDOR_ATTR_CONFIG_FOLLOW_AP_PREFERENCE_FOR_CNDS_SELECT = 121,
+
+	/* 16-bit unsigned P2P GO beacon interval in time units. */
+	QCA_WLAN_VENDOR_ATTR_CONFIG_P2P_GO_BEACON_INTERVAL = 122,
+
+	/* 8-bit value used to disable DFS owner capability. */
+	QCA_WLAN_VENDOR_ATTR_CONFIG_DFS_OWNER_DISABLE = 123,
+
 	/* 8-bit unsigned value to set nss and ant mode.
 	 * 1-1x1, 2-2x2
 	 */
@@ -19415,4 +19422,3 @@ enum qca_wlan_vendor_attr_idle_shutdown {
 	QCA_WLAN_VENDOR_ATTR_IDLE_SHUTDOWN_AFTER_LAST - 1,
 };
 #endif
-

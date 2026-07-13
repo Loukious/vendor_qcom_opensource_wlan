@@ -41,6 +41,7 @@
 #include <mac_init_api.h>
 #include <wlan_qct_sys.h>
 #include <wlan_hdd_main.h>
+extern qdf_wake_lock_t wlan_wake_lock;
 #include <wlan_hdd_assoc.h>
 #include <wlan_nlink_srv.h>
 #include <wlan_hdd_misc.h>
@@ -80,6 +81,7 @@
 #include <wlan_cfg80211_mc_cp_stats.h>
 #include "wlan_p2p_ucfg_api.h"
 #include "wlan_mlme_ucfg_api.h"
+#include "wlan_pmo_ns.h"
 #include "wlan_osif_request_manager.h"
 #include <wlan_hdd_sar_limits.h>
 #include "wlan_pkt_capture_ucfg_api.h"
@@ -541,10 +543,10 @@ void hdd_enable_ns_offload(struct hdd_adapter *adapter,
 		goto free_req;
 	}
 
-	if (ucfg_pmo_get_arp_ns_offload_dynamic_disable(vdev)) {
-		hdd_debug("Dynamic arp ns offload disabled");
-		ucfg_pmo_flush_ns_offload_req(vdev);
-		goto skip_cache_ns;
+	pmo_core_set_ns_offload_enable_dynamic(vdev, trigger, true);
+	if (!pmo_core_get_ns_offload_enable_dynamic(vdev)) {
+		hdd_debug("NS offload is dynamically disabled");
+		goto free_req;
 	}
 
 	/* Unicast Addresses */
@@ -574,7 +576,6 @@ void hdd_enable_ns_offload(struct hdd_adapter *adapter,
 		goto free_req;
 	}
 
-skip_cache_ns:
 	/* enable ns request */
 	status = ucfg_pmo_enable_ns_offload_in_fwr(vdev, trigger);
 	if (QDF_IS_STATUS_ERROR(status)) {
@@ -611,6 +612,13 @@ void hdd_disable_ns_offload(struct hdd_adapter *adapter,
 		hdd_err("Failed to flush NS Offload");
 		goto out;
 	}
+
+	if (!pmo_core_get_ns_offload_enable_dynamic(vdev)) {
+		hdd_debug("NS offload is already dynamically disabled");
+		goto out;
+	}
+
+	pmo_core_set_ns_offload_enable_dynamic(vdev, trigger, false);
 
 	status = ucfg_pmo_disable_ns_offload_in_fwr(vdev, trigger);
 	if (status != QDF_STATUS_SUCCESS)
@@ -1874,7 +1882,6 @@ static void hdd_ssr_restart_sap(struct hdd_context *hdd_ctx)
 	struct hdd_adapter *adapter, *next_adapter = NULL;
 	struct wlan_hdd_link_info *link_info;
 	bool ignore_cac_updated = false;
-	bool restart_due_to_cac_pending = false;
 
 	hdd_enter();
 
@@ -1882,8 +1889,6 @@ static void hdd_ssr_restart_sap(struct hdd_context *hdd_ctx)
 					   NET_DEV_HOLD_SSR_RESTART_SAP) {
 		if (adapter->device_mode != QDF_SAP_MODE)
 			goto next_adapter;
-restart_post_cac_links:
-		restart_due_to_cac_pending = false;
 		hdd_adapter_for_each_active_link_info(adapter, link_info) {
 			if (!test_bit(SOFTAP_INIT_DONE, &link_info->link_flags))
 				continue;
@@ -1896,10 +1901,6 @@ restart_post_cac_links:
 				hdd_restore_ignore_cac(hdd_ctx);
 				ignore_cac_updated = true;
 			}
-			if (hdd_ssr_restart_sap_cac_link(adapter, link_info)) {
-				restart_due_to_cac_pending = true;
-				continue;
-			}
 			hdd_debug("Restart prev SAP session(vdev %d), event_flags 0x%lx, link_flags 0x%lx(%s)",
 				  link_info->vdev_id,
 				  adapter->event_flags,
@@ -1909,8 +1910,6 @@ restart_post_cac_links:
 			wlan_hdd_start_sap(link_info, true);
 			hdd_apctx_set_ap_suspend(hdd_ctx, link_info);
 		}
-		if (restart_due_to_cac_pending)
-			goto restart_post_cac_links;
 next_adapter:
 		hdd_adapter_dev_put_debug(adapter,
 					  NET_DEV_HOLD_SSR_RESTART_SAP);
@@ -2187,7 +2186,8 @@ QDF_STATUS hdd_wlan_re_init(void)
 	bool bug_on_reinit_failure = CFG_BUG_ON_REINIT_FAILURE_DEFAULT;
 	bool value;
 
-	hdd_prevent_suspend(WIFI_POWER_EVENT_WAKELOCK_DRIVER_REINIT);
+	qdf_wake_lock_acquire(&wlan_wake_lock,
+			      WIFI_POWER_EVENT_WAKELOCK_DRIVER_REINIT);
 
 	/* Get the HDD context */
 	hdd_ctx = cds_get_context(QDF_MODULE_ID_HDD);
@@ -2218,7 +2218,8 @@ QDF_STATUS hdd_wlan_re_init(void)
 	hdd_ctx->bt_coex_mode_set = false;
 
 	/* Allow the phone to go to sleep */
-	hdd_allow_suspend(WIFI_POWER_EVENT_WAKELOCK_DRIVER_REINIT);
+	qdf_wake_lock_release(&wlan_wake_lock,
+			      WIFI_POWER_EVENT_WAKELOCK_DRIVER_REINIT);
 	/* set chip power save failure detected callback */
 	sme_set_chip_pwr_save_fail_cb(hdd_ctx->mac_handle,
 				      hdd_chip_pwr_save_fail_detected_cb);
@@ -2250,7 +2251,8 @@ err_re_init:
 
 err_ctx_null:
 	/* Allow the phone to go to sleep */
-	hdd_allow_suspend(WIFI_POWER_EVENT_WAKELOCK_DRIVER_REINIT);
+	qdf_wake_lock_release(&wlan_wake_lock,
+			      WIFI_POWER_EVENT_WAKELOCK_DRIVER_REINIT);
 	if (bug_on_reinit_failure)
 		QDF_BUG(0);
 	return -EPERM;

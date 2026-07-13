@@ -228,6 +228,20 @@ ucfg_pmo_dynamic_arp_ns_offload_runtime_allow(struct wlan_objmgr_vdev *vdev)
 }
 #endif
 
+bool
+ucfg_pmo_get_ns_offload_enable_dynamic(struct wlan_objmgr_vdev *vdev)
+{
+	return pmo_core_get_ns_offload_enable_dynamic(vdev);
+}
+
+void
+ucfg_pmo_set_ns_offload_enable_dynamic(struct wlan_objmgr_vdev *vdev,
+				       enum pmo_offload_trigger trigger,
+				       bool enable)
+{
+	pmo_core_set_ns_offload_enable_dynamic(vdev, trigger, enable);
+}
+
 QDF_STATUS
 ucfg_pmo_get_ns_offload_params(struct wlan_objmgr_vdev *vdev,
 			       struct pmo_ns_offload_params *params)

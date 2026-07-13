@@ -254,6 +254,59 @@ static QDF_STATUS pmo_core_ns_offload_sanity(struct wlan_objmgr_vdev *vdev)
 	return QDF_STATUS_SUCCESS;
 }
 
+bool pmo_core_get_ns_offload_enable_dynamic(struct wlan_objmgr_vdev *vdev)
+{
+	QDF_STATUS status;
+	bool enabled = false;
+	struct pmo_vdev_priv_obj *vdev_ctx;
+	struct pmo_psoc_priv_obj *pmo_psoc_ctx;
+
+	if (!vdev) {
+		pmo_err("vdev is NULL");
+		return false;
+	}
+
+	status = pmo_vdev_get_ref(vdev);
+	if (status != QDF_STATUS_SUCCESS)
+		return false;
+
+	vdev_ctx = pmo_vdev_get_priv(vdev);
+	pmo_psoc_ctx = vdev_ctx->pmo_psoc_ctx;
+
+	if (pmo_core_ns_offload_sanity(vdev) == QDF_STATUS_SUCCESS)
+		enabled = pmo_psoc_ctx->psoc_cfg.ns_offload_enable_dynamic;
+
+put_ref:
+	wlan_objmgr_vdev_release_ref(vdev, WLAN_PMO_ID);
+	return enabled;
+}
+
+void pmo_core_set_ns_offload_enable_dynamic(struct wlan_objmgr_vdev *vdev,
+					    enum pmo_offload_trigger trigger,
+					    bool enable)
+{
+	QDF_STATUS status;
+	struct pmo_vdev_priv_obj *vdev_ctx;
+	struct pmo_psoc_priv_obj *pmo_psoc_ctx;
+
+	if (!vdev) {
+		pmo_err("vdev is NULL");
+		return;
+	}
+
+	status = pmo_vdev_get_ref(vdev);
+	if (status != QDF_STATUS_SUCCESS)
+		return;
+
+	vdev_ctx = pmo_vdev_get_priv(vdev);
+	pmo_psoc_ctx = vdev_ctx->pmo_psoc_ctx;
+	if (pmo_core_ns_offload_sanity(vdev) == QDF_STATUS_SUCCESS &&
+	    trigger == pmo_ns_offload_dynamic_update)
+		pmo_psoc_ctx->psoc_cfg.ns_offload_enable_dynamic = enable;
+
+	wlan_objmgr_vdev_release_ref(vdev, WLAN_PMO_ID);
+}
+
 QDF_STATUS pmo_core_ns_check_offload(struct wlan_objmgr_psoc *psoc,
 				     enum pmo_offload_trigger trigger,
 				     uint8_t vdev_id)
@@ -389,7 +442,6 @@ QDF_STATUS pmo_core_enable_ns_offload_in_fwr(struct wlan_objmgr_vdev *vdev,
 {
 	QDF_STATUS status;
 	struct pmo_vdev_priv_obj *vdev_ctx;
-	struct pmo_psoc_priv_obj *pmo_psoc_ctx;
 	uint8_t vdev_id;
 
 	if (!vdev) {
@@ -403,27 +455,6 @@ QDF_STATUS pmo_core_enable_ns_offload_in_fwr(struct wlan_objmgr_vdev *vdev,
 		goto out;
 
 	vdev_ctx = pmo_vdev_get_priv(vdev);
-	pmo_psoc_ctx = vdev_ctx->pmo_psoc_ctx;
-
-	status = pmo_core_ns_offload_sanity(vdev);
-	if (status != QDF_STATUS_SUCCESS)
-		goto dec_ref;
-
-	if (trigger == pmo_ns_offload_dynamic_update) {
-		/*
-		 * user enable ns offload using ioctl/vendor cmd dynamically.
-		 */
-		pmo_psoc_ctx->psoc_cfg.ns_offload_enable_dynamic = true;
-		goto skip_ns_dynamic_check;
-	}
-
-	if (!pmo_psoc_ctx->psoc_cfg.ns_offload_enable_dynamic) {
-		pmo_debug("ns offload dynamically disable");
-		status = QDF_STATUS_E_INVAL;
-		goto dec_ref;
-	}
-
-skip_ns_dynamic_check:
 	qdf_spin_lock_bh(&vdev_ctx->pmo_vdev_lock);
 	if (vdev_ctx->vdev_ns_req.num_ns_offload_count == 0) {
 		qdf_spin_unlock_bh(&vdev_ctx->pmo_vdev_lock);
@@ -450,7 +481,6 @@ QDF_STATUS pmo_core_disable_ns_offload_in_fwr(struct wlan_objmgr_vdev *vdev,
 	QDF_STATUS status;
 	uint8_t vdev_id;
 	struct pmo_vdev_priv_obj *vdev_ctx;
-	struct pmo_psoc_priv_obj *pmo_psoc_ctx;
 
 	pmo_enter();
 	if (!vdev) {
@@ -464,33 +494,6 @@ QDF_STATUS pmo_core_disable_ns_offload_in_fwr(struct wlan_objmgr_vdev *vdev,
 		goto out;
 
 	vdev_ctx = pmo_vdev_get_priv(vdev);
-	pmo_psoc_ctx = vdev_ctx->pmo_psoc_ctx;
-
-	status = pmo_core_ns_offload_sanity(vdev);
-	if (status != QDF_STATUS_SUCCESS)
-		goto dec_ref;
-
-	if (trigger == pmo_ns_offload_dynamic_update) {
-		/*
-		 * user disable ns offload using ioctl/vendor cmd dynamically.
-		 */
-		if (!pmo_psoc_ctx->psoc_cfg.ns_offload_enable_dynamic) {
-			/* Already disabled, skip to end */
-			status = QDF_STATUS_SUCCESS;
-			goto dec_ref;
-		}
-
-		pmo_psoc_ctx->psoc_cfg.ns_offload_enable_dynamic = false;
-		goto skip_ns_dynamic_check;
-	}
-
-	if (!pmo_psoc_ctx->psoc_cfg.ns_offload_enable_dynamic) {
-		pmo_debug("ns offload dynamically disable");
-		status = QDF_STATUS_E_INVAL;
-		goto dec_ref;
-	}
-
-skip_ns_dynamic_check:
 	vdev_id = pmo_vdev_get_id(vdev);
 	pmo_debug("disable ns offload in fwr vdev id: %d vdev: %pK trigger: %d",
 		vdev_id, vdev, trigger);

@@ -60,7 +60,7 @@ qdf_export_symbol(qdf_timer_get_multiplier);
 
 /* Static Variable Definitions */
 static unsigned int persistent_timer_count;
-static qdf_mutex_t persistent_timer_count_lock;
+qdf_mutex_t persistent_timer_count_lock;
 
 static void (*scheduler_timer_callback)(qdf_mc_timer_t *);
 void qdf_register_mc_timer_callback(void (*callback) (qdf_mc_timer_t *))

@@ -1203,7 +1203,7 @@ typedef uint64_t target_paddr_t;
 typedef uint32_t target_paddr_t;
 #endif /*HTT_PADDR64 */
 
-static inline int
+static __always_inline int
 cdp_aggr_cfg(ol_txrx_soc_handle soc, uint8_t vdev_id,
 	     int max_subfrms_ampdu,
 	     int max_subfrms_amsdu)

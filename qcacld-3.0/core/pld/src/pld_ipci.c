@@ -409,16 +409,14 @@ pld_ipci_collect_driver_dump(struct device *dev,
 	int ret = -EINVAL;
 
 	pld_context = pld_get_global_context();
-
 	if (!pld_context)
 		return ret;
 
 	ops = pld_context->ops;
 	if (ops->collect_driver_dump)
-		ret =  ops->collect_driver_dump(dev,
-						PLD_BUS_TYPE_IPCI,
-						input_array,
-						num_entries);
+		ret = ops->collect_driver_dump(dev, PLD_BUS_TYPE_IPCI,
+					       input_array, num_entries);
+
 	return ret;
 }
 #endif

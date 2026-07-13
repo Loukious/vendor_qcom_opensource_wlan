@@ -46,6 +46,7 @@
 #ifdef FEATURE_WDS
 #include <cdp_txrx_ctrl.h>
 #endif
+#include "p2phc.h"
 
 
 /* Preprocessor definitions and constants */
@@ -891,6 +892,13 @@ QDF_STATUS dp_softap_start_xmit(qdf_nbuf_t nbuf, struct wlan_dp_link *dp_link)
 
 	except = dp_softap_is_exception_path(dp_link, nbuf,
 					     &tx_exc_metadata);
+
+	if (qdf_nbuf_is_ipv4_pkt(nbuf) &&
+	    !qdf_nbuf_is_tso(nbuf) &&
+	    !qdf_nbuf_is_bcast_pkt(nbuf) &&
+	    !qdf_nbuf_data_is_ipv4_mcast_pkt(qdf_nbuf_data(nbuf))) {
+		p2phc_tx_netdev_hook(nbuf, NULL);
+	}
 
 	if (qdf_likely(!except)) {
 		if (dp_intf->txrx_ops.tx.tx(soc, dp_link->link_id, nbuf)) {

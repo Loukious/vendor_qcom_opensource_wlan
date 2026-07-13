@@ -31,6 +31,7 @@ struct hdd_context;
 struct wma_tgt_cfg;
 struct hdd_beacon_data;
 struct sap_config;
+#include "spatial_reuse_api.h"
 
 #ifdef WLAN_FEATURE_11AX
 /**
@@ -141,6 +142,10 @@ int wlan_hdd_cfg80211_sr_operations(struct wiphy *wiphy,
  * Return: void
  */
 void hdd_sr_register_callbacks(struct hdd_context *hdd_ctx);
+
+void hdd_sr_osif_events(struct wlan_objmgr_vdev *vdev,
+			enum sr_osif_operation sr_osif_oper,
+			enum sr_osif_reason_code sr_osif_rc);
 
 #else
 static inline

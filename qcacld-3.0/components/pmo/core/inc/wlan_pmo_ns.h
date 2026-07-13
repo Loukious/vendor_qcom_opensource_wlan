@@ -94,6 +94,13 @@ QDF_STATUS
 pmo_core_get_ns_offload_params(struct wlan_objmgr_vdev *vdev,
 			       struct pmo_ns_offload_params *params);
 
+bool pmo_core_get_ns_offload_enable_dynamic(struct wlan_objmgr_vdev *vdev);
+
+void
+pmo_core_set_ns_offload_enable_dynamic(struct wlan_objmgr_vdev *vdev,
+				       enum pmo_offload_trigger trigger,
+				       bool enable);
+
 #endif /* WLAN_POWER_MANAGEMENT_OFFLOAD */
 
 #endif /* end  of _WLAN_PMO_NS_H_ */

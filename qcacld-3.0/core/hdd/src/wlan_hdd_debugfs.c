@@ -46,7 +46,7 @@
 
 static bool hdd_periodic_pattern_map[MAXNUM_PERIODIC_TX_PTRNS];
 
-static qdf_atomic_t debugfs_thread_count;
+qdf_atomic_t debugfs_thread_count;
 
 void hdd_debugfs_thread_increment(void)
 {

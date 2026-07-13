@@ -70,7 +70,7 @@ static struct wlan_dp_memory_profile_info g_dp_profile_info;
 #include <wlan_dp_fisa_rx.h>
 
 /* Global DP context */
-static struct wlan_dp_psoc_context *gp_dp_ctx;
+struct wlan_dp_psoc_context *gp_dp_ctx;
 
 QDF_STATUS dp_allocate_ctx(void)
 {

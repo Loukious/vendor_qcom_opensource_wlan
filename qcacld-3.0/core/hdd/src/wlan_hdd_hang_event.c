@@ -113,7 +113,7 @@ static int wlan_hdd_recovery_notifier_call(struct notifier_block *block,
 	return NOTIFY_OK;
 }
 
-static qdf_notif_block hdd_recovery_notifier = {
+qdf_notif_block hdd_recovery_notifier = {
 	.notif_block.notifier_call = wlan_hdd_recovery_notifier_call,
 };
 

@@ -35,20 +35,6 @@
 #include "wlan_objmgr_psoc_obj.h"
 
 /**
- * struct cfg_value_store - backing store for an ini file
- * @path: file path of the ini file
- * @node: internal list node for keeping track of all the allocated stores
- * @users: number of references on the store
- * @values: a values struct containing the parsed values from the ini file
- */
-struct cfg_value_store {
-	char *path;
-	qdf_list_node_t node;
-	qdf_atomic_t users;
-	struct cfg_values values;
-};
-
-/**
  * enum cfg_type - Enum for CFG/INI types
  * @CFG_INT_ITEM: Integer CFG/INI
  * @CFG_UINT_ITEM: Unsigned integer CFG/INI
@@ -432,10 +418,6 @@ static bool __cfg_is_init;
 static struct cfg_value_store *__cfg_global_store;
 static qdf_list_t __cfg_stores_list;
 static qdf_spinlock_t __cfg_stores_lock;
-
-struct cfg_psoc_ctx {
-	struct cfg_value_store *store;
-};
 
 static QDF_STATUS
 cfg_store_alloc(const char *path, struct cfg_value_store **out_store)

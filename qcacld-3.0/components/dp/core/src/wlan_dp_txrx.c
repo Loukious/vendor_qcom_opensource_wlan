@@ -49,6 +49,7 @@
 		defined(CONFIG_RHINE))
 #include <hif_napi.h>
 #endif
+#include "p2phc.h"
 
 
 uint32_t wlan_dp_intf_get_pkt_type_bitmap_value(void *link_ctx)
@@ -721,6 +722,12 @@ dp_start_xmit(struct wlan_dp_link *dp_link, qdf_nbuf_t nbuf)
 
 	dp_fix_broadcast_eapol(dp_link, nbuf);
 
+	if (qdf_nbuf_is_ipv4_pkt(nbuf) &&
+	    !qdf_nbuf_is_tso(nbuf) &&
+	    !qdf_nbuf_is_bcast_pkt(nbuf) &&
+	    !qdf_nbuf_data_is_ipv4_mcast_pkt(qdf_nbuf_data(nbuf))) {
+		p2phc_tx_netdev_hook(nbuf, NULL);
+	}
 
 	if (dp_intf->txrx_ops.tx.tx(soc, dp_link->link_id, nbuf)) {
 		dp_debug_rl("Failed to send packet from adapter %u",
@@ -1993,4 +2000,3 @@ QDF_STATUS dp_rx_packet_cbk(void *dp_link_context,
 
 	return QDF_STATUS_SUCCESS;
 }
-

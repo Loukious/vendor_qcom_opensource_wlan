@@ -24,6 +24,9 @@
 #define __I_CFG_H
 
 #include "cfg_define.h"
+#include "i_cfg_objmgr.h"
+#include "qdf_atomic.h"
+#include "qdf_list.h"
 #include "qdf_trace.h"
 #include "qdf_types.h"
 #include "wlan_objmgr_psoc_obj.h"
@@ -63,6 +66,17 @@ struct cfg_values {
 	CFG_ALL
 };
 
+struct cfg_value_store {
+	char *path;
+	qdf_list_node_t node;
+	qdf_atomic_t users;
+	struct cfg_values values;
+};
+
+struct cfg_psoc_ctx {
+	struct cfg_value_store *store;
+};
+
 #undef __CFG_INI_STRING
 #define __CFG_INI_STRING(args...) __CFG_INI(args)
 #undef __CFG_INI
@@ -70,8 +84,15 @@ struct cfg_values {
 
 struct cfg_values *cfg_psoc_get_values(struct wlan_objmgr_psoc *psoc);
 
-#define __cfg_get(psoc, id) (cfg_psoc_get_values( \
+static __always_inline struct cfg_values *
+cfg_psoc_get_values_direct(struct wlan_objmgr_psoc *psoc)
+{
+	struct cfg_psoc_ctx *psoc_ctx = cfg_psoc_get_priv(psoc);
+
+	return &psoc_ctx->store->values;
+}
+
+#define __cfg_get(psoc, id) (cfg_psoc_get_values_direct( \
 			(struct wlan_objmgr_psoc *)psoc)->id##_internal)
 
 #endif /* __I_CFG_H */
-

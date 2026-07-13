@@ -25,6 +25,7 @@
 #include "cds_sched.h"
 #include "osdep.h"
 #include "hif.h"
+#include "hif_main.h"
 #include "htc.h"
 #include "epping_main.h"
 #include "osif_sync.h"
@@ -44,6 +45,9 @@
 #include "wlan_ipa_ucfg_api.h"
 #include "wlan_hdd_debugfs.h"
 #include "cfg_ucfg_api.h"
+#include "i_cfg.h"
+#include "i_cfg_objmgr.h"
+#include "wlan_pmo_main.h"
 #include <linux/suspend.h>
 #include <qdf_notifier.h>
 #include <qdf_hang_event_notifier.h>
@@ -70,6 +74,21 @@ static qdf_atomic_t is_recovery_cleanup_done;
 
 /* firmware/host hang event data */
 static uint8_t g_fw_host_hang_event[QDF_HANG_EVENT_DATA_SIZE];
+
+struct hdd_cfg_value_store {
+	char *path;
+	qdf_list_node_t node;
+	qdf_atomic_t users;
+	struct cfg_values values;
+};
+
+struct hdd_cfg_psoc_ctx {
+	struct hdd_cfg_value_store *store;
+};
+
+#define hdd_cfg_get_values(psoc) \
+	(&((struct hdd_cfg_psoc_ctx *)wlan_objmgr_psoc_get_comp_private_obj( \
+		(psoc), WLAN_UMAC_COMP_CONFIG))->store->values)
 
 /*
  * In BMI Phase we are only sending small chunk (256 bytes) of the FW image at
@@ -552,7 +571,8 @@ int hdd_hif_open(struct device *dev, void *bdev, const struct hif_bus_id *bid,
 	struct hif_opaque_softc *hif_ctx;
 	qdf_device_t qdf_ctx = cds_get_context(QDF_MODULE_ID_QDF_DEVICE);
 	struct hif_driver_state_callbacks cbk;
-	uint32_t mode = cds_get_conparam();
+	extern int curr_con_mode;
+	uint32_t mode = curr_con_mode;
 	struct hdd_context *hdd_ctx = cds_get_context(QDF_MODULE_ID_HDD);
 
 	if (!hdd_ctx)
@@ -606,15 +626,14 @@ int hdd_hif_open(struct device *dev, void *bdev, const struct hif_bus_id *bid,
 		}
 	}
 
-	hdd_hif_set_ce_max_yield_time(
-				hif_ctx, bus_type,
-				cfg_get(hdd_ctx->psoc,
-					CFG_DP_CE_SERVICE_MAX_YIELD_TIME));
-	ucfg_pmo_psoc_set_hif_handle(hdd_ctx->psoc, hif_ctx);
+	HIF_GET_SOFTC(hif_ctx)->ce_service_max_yield_time =
+		(unsigned long long)hdd_cfg_get_values(hdd_ctx->psoc)->
+		__CFG_DP_CE_SERVICE_MAX_YIELD_TIME_internal * 1000;
+	pmo_core_psoc_set_hif_handle(hdd_ctx->psoc, hif_ctx);
 	ucfg_dp_set_hif_handle(hdd_ctx->psoc, hif_ctx);
 	hif_set_ce_service_max_rx_ind_flush(hif_ctx,
-				cfg_get(hdd_ctx->psoc,
-					CFG_DP_CE_SERVICE_MAX_RX_IND_FLUSH));
+				hdd_cfg_get_values(hdd_ctx->psoc)->
+				__CFG_DP_CE_SERVICE_MAX_RX_IND_FLUSH_internal);
 	return 0;
 
 mark_target_not_ready:
@@ -646,7 +665,7 @@ void hdd_hif_close(struct hdd_context *hdd_ctx, void *hif_ctx)
 	hdd_deinit_cds_hif_context();
 	hif_close(hif_ctx);
 
-	ucfg_pmo_psoc_set_hif_handle(hdd_ctx->psoc, NULL);
+	pmo_core_psoc_set_hif_handle(hdd_ctx->psoc, NULL);
 }
 
 /**

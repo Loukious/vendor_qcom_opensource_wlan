@@ -59,6 +59,10 @@
 #include <qdf_tracepoint.h>
 #include "qdf_ssr_driver_dump.h"
 
+#ifdef HIF_CE_LOG_INFO
+extern qdf_atomic_notif_head qdf_hang_event_notif_head;
+#endif
+
 void hif_dump(struct hif_opaque_softc *hif_ctx, uint8_t cmd_id, bool start)
 {
 	hif_trigger_dump(hif_ctx, cmd_id, start);
@@ -774,7 +778,9 @@ QDF_STATUS hif_register_recovery_notifier(struct hif_softc *hif_handle)
 
 	hif_notifier->notif_block.notifier_call = hif_recovery_notifier_cb;
 	hif_notifier->priv_data = hif_handle;
-	return qdf_hang_event_register_notifier(hif_notifier);
+	return qdf_status_from_os_return(
+		atomic_notifier_chain_register(&qdf_hang_event_notif_head,
+					       &hif_notifier->notif_block));
 }
 
 /**
@@ -788,7 +794,9 @@ QDF_STATUS hif_unregister_recovery_notifier(struct hif_softc *hif_handle)
 {
 	qdf_notif_block *hif_notifier = &hif_handle->hif_recovery_notifier;
 
-	return qdf_hang_event_unregister_notifier(hif_notifier);
+	return qdf_status_from_os_return(
+		atomic_notifier_chain_unregister(&qdf_hang_event_notif_head,
+						 &hif_notifier->notif_block));
 }
 #else
 static inline
@@ -2079,7 +2087,7 @@ QDF_STATUS hif_enable(struct hif_opaque_softc *hif_ctx, struct device *dev,
 		return QDF_STATUS_E_NULL_VALUE;
 	}
 
-	status = hif_enable_bus(scn, dev, bdev, bid, type);
+	status = scn->bus_ops.hif_enable_bus(scn, dev, bdev, bid, type);
 	if (status != QDF_STATUS_SUCCESS) {
 		hif_err("hif_enable_bus error = %d", status);
 		return status;
@@ -2091,20 +2099,13 @@ QDF_STATUS hif_enable(struct hif_opaque_softc *hif_ctx, struct device *dev,
 		goto disable_bus;
 	}
 
-	if (hif_delayed_reg_write_init(scn) != QDF_STATUS_SUCCESS) {
-		hif_err("unable to initialize delayed reg write");
-		goto hal_detach;
-	}
-
-	if (hif_bus_configure(scn)) {
+	if (scn->bus_ops.hif_bus_configure(scn)) {
 		hif_err("Target probe failed");
 		status = QDF_STATUS_E_FAILURE;
 		goto hal_detach;
 	}
 
-	hif_ut_suspend_init(scn);
 	hif_register_recovery_notifier(scn);
-	hif_latency_detect_timer_start(hif_ctx);
 
 	/*
 	 * Flag to avoid potential unallocated memory access from MSI
@@ -2123,7 +2124,7 @@ QDF_STATUS hif_enable(struct hif_opaque_softc *hif_ctx, struct device *dev,
 hal_detach:
 	hif_hal_detach(scn);
 disable_bus:
-	hif_disable_bus(scn);
+	scn->bus_ops.hif_disable_bus(scn);
 	return status;
 }
 
@@ -2140,15 +2141,15 @@ void hif_disable(struct hif_opaque_softc *hif_ctx, enum hif_disable_type type)
 
 	hif_unregister_recovery_notifier(scn);
 
-	hif_nointrs(scn);
+	scn->bus_ops.hif_nointrs(scn);
 	if (scn->hif_init_done == false)
-		hif_shutdown_device(hif_ctx);
+		scn->bus_ops.hif_shutdown_device(scn);
 	else
-		hif_stop(hif_ctx);
+		scn->bus_ops.hif_stop(scn);
 
 	hif_hal_detach(scn);
 
-	hif_disable_bus(scn);
+	scn->bus_ops.hif_disable_bus(scn);
 
 	hif_wlan_disable(scn);
 
