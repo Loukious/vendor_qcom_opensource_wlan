@@ -96,7 +96,7 @@
 #define WMA_INJECTION_DESC_MASK 0x0fff
 #define WMA_INJECTION_SLOT_COUNT 256
 #define WMA_INJECTION_INFLIGHT_LIMIT 1
-#define WMA_INJECTION_DP_INFLIGHT_LIMIT 8
+#define WMA_INJECTION_DP_INFLIGHT_LIMIT 1
 #define WMA_INJECTION_QUEUE_LIMIT 256
 #define WMA_INJECTION_TIMEOUT (2 * HZ)
 
@@ -442,10 +442,12 @@ wma_injection_send(tp_wma_handle wma, qdf_nbuf_t nbuf,
 		tx_exc.tid = CDP_INVALID_TID;
 		tx_exc.tx_encap_type = htt_cmn_pkt_type_raw;
 		tx_exc.sec_type = CDP_INVALID_SEC_TYPE;
+		tx_exc.is_tx_sniffer = 1;
+		tx_exc.ppdu_cookie = desc_id;
 		unsent = soc ? cdp_tx_send_exc(soc, params.vdev_id, nbuf,
 					       &tx_exc) : nbuf;
 		if (trace)
-			pr_err("qca_inject: wifi3 raw send monitor=%u desc=%u accepted=%u\n",
+			pr_err("qca_inject: wifi3 standalone raw send monitor=%u desc=%u accepted=%u\n",
 			       params.vdev_id, desc_id, !unsent);
 		if (unsent) {
 			status = QDF_STATUS_E_BUSY;
