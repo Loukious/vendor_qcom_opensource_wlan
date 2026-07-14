@@ -837,6 +837,21 @@ bool hdd_allow_new_intf(struct hdd_context *hdd_ctx,
 	return num_active_adapter < QDF_MAX_NO_OF_SAP_MODE;
 }
 
+#ifdef FEATURE_FRAME_INJECTION_SUPPORT
+static void hdd_monitor_set_wext_compat(struct wiphy *wiphy, bool enable)
+{
+	if (enable)
+		wiphy->flags &= ~WIPHY_FLAG_SUPPORTS_MLO;
+	else
+		wiphy->flags |= WIPHY_FLAG_SUPPORTS_MLO;
+}
+#else
+static inline void
+hdd_monitor_set_wext_compat(struct wiphy *wiphy, bool enable)
+{
+}
+#endif
+
 /**
  * __wlan_hdd_add_virtual_intf() - Add virtual interface
  * @wiphy: wiphy pointer
@@ -973,6 +988,7 @@ struct wireless_dev *__wlan_hdd_add_virtual_intf(struct wiphy *wiphy,
 			ucfg_dp_set_mon_conf_flags(hdd_ctx->psoc, *flags);
 
 			if (adapter) {
+				hdd_monitor_set_wext_compat(wiphy, true);
 				hdd_exit();
 				return adapter->dev->ieee80211_ptr;
 			}
@@ -1034,6 +1050,9 @@ struct wireless_dev *__wlan_hdd_add_virtual_intf(struct wiphy *wiphy,
 		ucfg_dp_try_send_rps_ind(vdev);
 		hdd_objmgr_put_vdev_by_user(vdev, WLAN_DP_ID);
 	}
+
+	if (mode == QDF_MONITOR_MODE)
+		hdd_monitor_set_wext_compat(wiphy, true);
 
 	hdd_exit();
 
@@ -1358,8 +1377,10 @@ int wlan_hdd_del_virtual_intf(struct wiphy *wiphy, struct wireless_dev *wdev)
 	osif_vdev_sync_trans_stop(vdev_sync);
 	osif_vdev_sync_destroy(vdev_sync);
 
-	if (!errno && restore_station)
+	if (!errno && restore_station) {
+		hdd_monitor_set_wext_compat(wiphy, false);
 		hdd_queue_monitor_station_restore(hdd_ctx);
+	}
 
 	return errno;
 }
