@@ -87,13 +87,23 @@
 #ifdef FEATURE_FRAME_INJECTION_SUPPORT
 #include <linux/jiffies.h>
 #include <linux/list.h>
+#include <linux/moduleparam.h>
 #include <linux/workqueue.h>
 
 #define WMA_INJECTION_DESC_BASE 0xf000
 #define WMA_INJECTION_DESC_MASK 0x0fff
 #define WMA_INJECTION_SLOT_COUNT 256
-#define WMA_INJECTION_QUEUE_LIMIT 256
+#define WMA_INJECTION_INFLIGHT_DEFAULT 24
+#define WMA_INJECTION_INFLIGHT_MAX 64
+#define WMA_INJECTION_QUEUE_LIMIT 1024
 #define WMA_INJECTION_TIMEOUT (2 * HZ)
+
+static unsigned int wma_injection_inflight_limit =
+	WMA_INJECTION_INFLIGHT_DEFAULT;
+module_param_named(injection_inflight_limit, wma_injection_inflight_limit,
+		   uint, 0644);
+MODULE_PARM_DESC(injection_inflight_limit,
+		 "Maximum monitor-injection frames awaiting firmware completion");
 
 struct wma_injection_pending {
 	struct list_head node;
@@ -125,6 +135,7 @@ static struct {
 	tp_wma_handle wma;
 	uint16_t next_desc;
 	uint16_t pending_count;
+	uint16_t in_flight;
 	bool active;
 } wma_injection_ctx;
 
@@ -330,6 +341,7 @@ wma_injection_send(tp_wma_handle wma, qdf_nbuf_t nbuf,
 	slot->nbuf = nbuf;
 	slot->desc_id = desc_id;
 	slot->submitted = jiffies;
+	wma_injection_ctx.in_flight++;
 	spin_unlock_bh(&wma_injection_ctx.lock);
 	status = wmi_mgmt_unified_cmd_send(wma->wmi_handle, &params);
 	if (trace)
@@ -337,8 +349,11 @@ wma_injection_send(tp_wma_handle wma, qdf_nbuf_t nbuf,
 		       params.vdev_id, desc_id, status);
 	if (QDF_IS_STATUS_ERROR(status)) {
 		spin_lock_bh(&wma_injection_ctx.lock);
-		if (slot->desc_id == desc_id)
+		if (slot->nbuf && slot->desc_id == desc_id) {
 			qdf_mem_zero(slot, sizeof(*slot));
+			if (wma_injection_ctx.in_flight)
+				wma_injection_ctx.in_flight--;
+		}
 		spin_unlock_bh(&wma_injection_ctx.lock);
 	}
 	return status;
@@ -348,12 +363,17 @@ static void wma_injection_work(struct work_struct *work)
 {
 	static unsigned int trace_count;
 	struct wma_injection_pending *pending;
+	unsigned int in_flight_limit;
 	unsigned long flags;
 	QDF_STATUS status;
 
+	in_flight_limit = clamp_t(unsigned int,
+				  READ_ONCE(wma_injection_inflight_limit), 1,
+				  WMA_INJECTION_INFLIGHT_MAX);
 	while (true) {
 		spin_lock_irqsave(&wma_injection_ctx.lock, flags);
-		if (list_empty(&wma_injection_ctx.pending)) {
+		if (list_empty(&wma_injection_ctx.pending) ||
+		    wma_injection_ctx.in_flight >= in_flight_limit) {
 			spin_unlock_irqrestore(&wma_injection_ctx.lock, flags);
 			break;
 		}
@@ -382,6 +402,7 @@ static void wma_injection_reaper(struct work_struct *work)
 {
 	struct wma_injection_slot *slot;
 	qdf_nbuf_t nbuf;
+	bool wake_worker = false;
 	int i;
 
 	for (i = 0; i < WMA_INJECTION_SLOT_COUNT; i++) {
@@ -395,9 +416,14 @@ static void wma_injection_reaper(struct work_struct *work)
 		}
 		nbuf = slot->nbuf;
 		qdf_mem_zero(slot, sizeof(*slot));
+		if (wma_injection_ctx.in_flight)
+			wma_injection_ctx.in_flight--;
+		wake_worker = true;
 		spin_unlock_bh(&wma_injection_ctx.lock);
 		wma_injection_unmap_free(wma_injection_ctx.wma, nbuf);
 	}
+	if (wake_worker && wma_injection_ctx.active)
+		schedule_work(&wma_injection_ctx.work);
 	if (wma_injection_ctx.active)
 		schedule_delayed_work(&wma_injection_ctx.reaper, HZ);
 }
@@ -432,9 +458,12 @@ bool wma_injection_complete(void *wma_context, uint16_t desc_id,
 			    uint32_t status)
 {
 	static unsigned int trace_count;
+	bool trace = trace_count++ < 16;
 	tp_wma_handle wma = wma_context;
 	struct wma_injection_slot *slot;
 	qdf_nbuf_t nbuf;
+	uint16_t in_flight;
+	uint16_t pending_count;
 
 	if ((desc_id & ~WMA_INJECTION_DESC_MASK) != WMA_INJECTION_DESC_BASE)
 		return false;
@@ -446,14 +475,20 @@ bool wma_injection_complete(void *wma_context, uint16_t desc_id,
 	}
 	nbuf = slot->nbuf;
 	qdf_mem_zero(slot, sizeof(*slot));
+	if (wma_injection_ctx.in_flight)
+		wma_injection_ctx.in_flight--;
+	in_flight = wma_injection_ctx.in_flight;
+	pending_count = wma_injection_ctx.pending_count;
 	spin_unlock_bh(&wma_injection_ctx.lock);
-	if (trace_count++ < 16)
-		pr_err("qca_inject: completion desc=%u status=%u\n",
-		       desc_id, status);
-	if (status != WMI_MGMT_TX_COMP_TYPE_COMPLETE_OK)
+	if (trace)
+		pr_err("qca_inject: completion desc=%u status=%u inflight=%u pending=%u\n",
+		       desc_id, status, in_flight, pending_count);
+	if (trace && status != WMI_MGMT_TX_COMP_TYPE_COMPLETE_OK)
 		wma_warn("Injection completion failed: desc=%u status=%u",
 			 desc_id, status);
 	wma_injection_unmap_free(wma, nbuf);
+	if (wma_injection_ctx.active)
+		schedule_work(&wma_injection_ctx.work);
 	return true;
 }
 
@@ -474,8 +509,10 @@ static void wma_injection_init(tp_wma_handle wma)
 	INIT_DELAYED_WORK(&wma_injection_ctx.reaper, wma_injection_reaper);
 	wma_injection_ctx.wma = wma;
 	wma_injection_ctx.active = true;
-	pr_err("qca_inject: WMA queue initialized max_vdev=%u\n",
-	       wma->max_bssid);
+	pr_err("qca_inject: WMA queue initialized max_vdev=%u inflight=%u\n",
+	       wma->max_bssid,
+	       clamp_t(unsigned int, READ_ONCE(wma_injection_inflight_limit),
+		       1, WMA_INJECTION_INFLIGHT_MAX));
 	schedule_delayed_work(&wma_injection_ctx.reaper, HZ);
 }
 
