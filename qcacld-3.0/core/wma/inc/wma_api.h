@@ -47,6 +47,8 @@ QDF_STATUS wma_injection_prepare(uint8_t monitor_vdev_id,
 				 uint32_t chanfreq);
 bool wma_injection_complete(void *wma_handle, uint16_t desc_id,
 			    uint32_t status);
+bool wma_injection_dp_complete(void *wma_handle, qdf_nbuf_t nbuf,
+			       int32_t status);
 void wma_injection_pre_stop_cleanup(void);
 #else
 static inline QDF_STATUS
@@ -64,6 +66,12 @@ wma_injection_prepare(uint8_t monitor_vdev_id, uint32_t chanfreq)
 static inline bool
 wma_injection_complete(void *wma_handle, uint16_t desc_id,
 		       uint32_t status)
+{
+	return false;
+}
+
+static inline bool
+wma_injection_dp_complete(void *wma_handle, qdf_nbuf_t nbuf, int32_t status)
 {
 	return false;
 }
