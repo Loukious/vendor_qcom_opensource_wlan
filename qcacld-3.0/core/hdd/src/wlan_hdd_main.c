@@ -16380,7 +16380,14 @@ static int hdd_monitor_wext_giwname(struct net_device *dev,
 				    struct iw_request_info *info,
 				    char *name, char *extra)
 {
+	static unsigned int trace_count;
+	bool trace = trace_count++ < 16;
+
+	if (trace)
+		pr_err("qca_probe: wext name enter dev=%s\n", dev->name);
 	strscpy(name, "IEEE 802.11", IFNAMSIZ);
+	if (trace)
+		pr_err("qca_probe: wext name exit dev=%s\n", dev->name);
 
 	return 0;
 }
@@ -16389,13 +16396,25 @@ static int hdd_monitor_wext_giwmode(struct net_device *dev,
 				    struct iw_request_info *info,
 				    __u32 *mode, char *extra)
 {
+	static unsigned int trace_count;
+	bool trace = trace_count++ < 16;
 	struct hdd_adapter *adapter = WLAN_HDD_GET_PRIV_PTR(dev);
+	int ret;
 
-	if (hdd_validate_adapter(adapter))
+	if (trace)
+		pr_err("qca_probe: wext mode enter dev=%s\n", dev->name);
+	ret = hdd_validate_adapter(adapter);
+	if (trace)
+		pr_err("qca_probe: wext mode validate dev=%s ret=%d\n",
+		       dev->name, ret);
+	if (ret)
 		return -EINVAL;
 
 	*mode = adapter->device_mode == QDF_MONITOR_MODE ?
 		IW_MODE_MONITOR : IW_MODE_INFRA;
+	if (trace)
+		pr_err("qca_probe: wext mode exit dev=%s mode=%u\n",
+		       dev->name, *mode);
 
 	return 0;
 }
@@ -16404,19 +16423,34 @@ static int hdd_monitor_wext_giwfreq(struct net_device *dev,
 				    struct iw_request_info *info,
 				    struct iw_freq *freq, char *extra)
 {
+	static unsigned int trace_count;
+	bool trace = trace_count++ < 16;
 	struct hdd_adapter *adapter = WLAN_HDD_GET_PRIV_PTR(dev);
 	struct hdd_monitor_ctx *mon_ctx;
+	int ret;
 
-	if (hdd_validate_adapter(adapter) ||
-	    adapter->device_mode != QDF_MONITOR_MODE)
+	if (trace)
+		pr_err("qca_probe: wext freq enter dev=%s\n", dev->name);
+	ret = hdd_validate_adapter(adapter);
+	if (trace)
+		pr_err("qca_probe: wext freq validate dev=%s ret=%d\n",
+		       dev->name, ret);
+	if (ret || adapter->device_mode != QDF_MONITOR_MODE ||
+	    !adapter->deflink)
 		return -EINVAL;
 
 	mon_ctx = WLAN_HDD_GET_MONITOR_CTX_PTR(adapter->deflink);
-	if (!mon_ctx->freq)
+	if (!mon_ctx->freq) {
+		if (trace)
+			pr_err("qca_probe: wext freq empty dev=%s\n", dev->name);
 		return -ENODATA;
+	}
 
 	freq->m = mon_ctx->freq;
 	freq->e = 6;
+	if (trace)
+		pr_err("qca_probe: wext freq exit dev=%s mhz=%d\n",
+		       dev->name, freq->m);
 
 	return 0;
 }

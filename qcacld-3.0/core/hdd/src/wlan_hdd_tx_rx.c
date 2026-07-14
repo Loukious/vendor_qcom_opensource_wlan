@@ -612,6 +612,11 @@ static void hdd_monitor_mode_tx_inject(struct hdd_adapter *adapter,
 	static unsigned int injection_trace_count;
 	bool trace = injection_trace_count++ < 16;
 	QDF_STATUS status;
+	unsigned int original_len = skb->len;
+
+	if (trace)
+		pr_err("qca_probe: inject enter dev=%s len=%u\n",
+		       dev->name, original_len);
 
 	if (!adapter || !adapter->deflink) {
 		if (trace)
@@ -619,6 +624,9 @@ static void hdd_monitor_mode_tx_inject(struct hdd_adapter *adapter,
 		kfree_skb(skb);
 		return;
 	}
+	if (trace)
+		pr_err("qca_probe: inject adapter ready vdev=%u\n",
+		       adapter->deflink->vdev_id);
 
 	if (!hdd_strip_radiotap(skb)) {
 		if (trace)
@@ -627,6 +635,9 @@ static void hdd_monitor_mode_tx_inject(struct hdd_adapter *adapter,
 		kfree_skb(skb);
 		return;
 	}
+	if (trace)
+		pr_err("qca_probe: inject radiotap done old=%u new=%u\n",
+		       original_len, skb->len);
 
 	if (!hdd_injection_frame_is_valid(skb)) {
 		if (trace)
@@ -637,7 +648,12 @@ static void hdd_monitor_mode_tx_inject(struct hdd_adapter *adapter,
 		kfree_skb(skb);
 		return;
 	}
+	if (trace)
+		pr_err("qca_probe: inject frame valid len=%u\n", skb->len);
 
+	if (trace)
+		pr_err("qca_probe: inject WMA call vdev=%u\n",
+		       adapter->deflink->vdev_id);
 	status = wma_injection_tx((qdf_nbuf_t)skb,
 				  adapter->deflink->vdev_id);
 	if (QDF_IS_STATUS_ERROR(status)) {
@@ -675,9 +691,8 @@ static void __hdd_hard_start_xmit(struct sk_buff *skb,
 {
 	static unsigned int monitor_trace_count;
 	struct hdd_adapter *adapter = WLAN_HDD_GET_PRIV_PTR(dev);
-	struct hdd_tx_rx_stats *stats =
-				&adapter->deflink->hdd_stats.tx_rx_stats;
-	struct hdd_station_ctx *sta_ctx = &adapter->deflink->session.station;
+	struct hdd_tx_rx_stats *stats;
+	struct hdd_station_ctx *sta_ctx;
 	int cpu = qdf_get_smp_processor_id();
 	bool granted;
 	sme_ac_enum_type ac;
@@ -693,6 +708,9 @@ static void __hdd_hard_start_xmit(struct sk_buff *skb,
 		return;
 	}
 #endif
+	/* Monitor TX does not use the normal station datapath state. */
+	stats = &adapter->deflink->hdd_stats.tx_rx_stats;
+	sta_ctx = &adapter->deflink->session.station;
 
 	if (hdd_drop_tx_packet_on_ftm(skb))
 		return;
@@ -807,6 +825,14 @@ static void __hdd_hard_start_xmit(struct sk_buff *skb,
  */
 netdev_tx_t hdd_hard_start_xmit(struct sk_buff *skb, struct net_device *net_dev)
 {
+#ifdef FEATURE_FRAME_INJECTION_SUPPORT
+	static unsigned int monitor_entry_trace_count;
+
+	if (net_dev->type == ARPHRD_IEEE80211_RADIOTAP &&
+	    monitor_entry_trace_count++ < 32)
+		pr_err("qca_probe: ndo wrapper enter dev=%s len=%u\n",
+		       net_dev->name, skb->len);
+#endif
 	__hdd_hard_start_xmit(skb, net_dev);
 
 	return NETDEV_TX_OK;
