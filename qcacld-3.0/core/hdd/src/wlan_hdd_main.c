@@ -7877,6 +7877,8 @@ bool hdd_is_vdev_in_conn_state(struct wlan_hdd_link_info *link_info)
 	case QDF_P2P_GO_MODE:
 		return (test_bit(SOFTAP_BSS_STARTED,
 				 &link_info->link_flags));
+	case QDF_MONITOR_MODE:
+		return false;
 	default:
 		hdd_err("Device mode %d invalid",
 			link_info->adapter->device_mode);
