@@ -592,13 +592,14 @@ static bool hdd_injection_frame_is_valid(const struct sk_buff *skb)
 	const struct ieee80211_hdr *hdr;
 	unsigned int hdr_len;
 
-	if (skb->len < sizeof(struct ieee80211_hdr))
+	/* Management frames use the normal three-address, 24-byte header. */
+	if (skb->len < sizeof(struct ieee80211_hdr_3addr))
 		return false;
 
 	hdr = (const struct ieee80211_hdr *)skb->data;
 	hdr_len = ieee80211_hdrlen(hdr->frame_control);
 
-	if (hdr_len < sizeof(struct ieee80211_hdr) || skb->len < hdr_len)
+	if (hdr_len < sizeof(struct ieee80211_hdr_3addr) || skb->len < hdr_len)
 		return false;
 
 	return ieee80211_is_mgmt(hdr->frame_control);
