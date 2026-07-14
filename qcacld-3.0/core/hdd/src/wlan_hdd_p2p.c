@@ -949,9 +949,6 @@ struct wireless_dev *__wlan_hdd_add_virtual_intf(struct wiphy *wiphy,
 		 * reject the request.
 		 **/
 		if (
-#ifdef FEATURE_FRAME_INJECTION_SUPPORT
-		    true ||
-#endif
 		    (ucfg_dp_is_local_pkt_capture_enabled(hdd_ctx->psoc) &&
 		     !is_rx_mon) ||
 		    (ucfg_mlme_is_sta_mon_conc_supported(hdd_ctx->psoc) &&

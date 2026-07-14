@@ -165,6 +165,8 @@ static QDF_STATUS
 wma_injection_ensure_helper(tp_wma_handle wma, uint8_t monitor_vdev_id,
 			    uint32_t chanfreq)
 {
+	static unsigned int trace_count;
+	bool trace = trace_count++ < 8;
 	struct vdev_create_params create = {0};
 	struct vdev_start_params start = {0};
 	struct peer_create_params peer = {0};
@@ -186,6 +188,9 @@ wma_injection_ensure_helper(tp_wma_handle wma, uint8_t monitor_vdev_id,
 			break;
 	if (i < 0)
 		return QDF_STATUS_E_RESOURCES;
+	if (trace)
+		pr_err("qca_inject: helper candidate monitor=%u helper=%d freq=%u\n",
+		       monitor_vdev_id, i, chanfreq);
 
 	monitor_mac = wlan_vdev_mlme_get_macaddr(
 			wma->interfaces[monitor_vdev_id].vdev);
@@ -204,6 +209,9 @@ wma_injection_ensure_helper(tp_wma_handle wma, uint8_t monitor_vdev_id,
 	create.nss_5g = 1;
 	status = wmi_unified_vdev_create_send(wma->wmi_handle,
 					      helper->mac_addr, &create);
+	if (trace)
+		pr_err("qca_inject: helper create vdev=%u status=%d\n",
+		       helper->vdev_id, status);
 	if (QDF_IS_STATUS_ERROR(status))
 		goto fail;
 	msleep(150);
@@ -216,6 +224,9 @@ wma_injection_ensure_helper(tp_wma_handle wma, uint8_t monitor_vdev_id,
 	start.channel.maxregpower = 20;
 	start.channel.maxpower = 20;
 	status = wmi_unified_vdev_start_send(wma->wmi_handle, &start);
+	if (trace)
+		pr_err("qca_inject: helper start vdev=%u status=%d\n",
+		       helper->vdev_id, status);
 	if (QDF_IS_STATUS_ERROR(status))
 		goto delete_vdev;
 	msleep(150);
@@ -224,6 +235,9 @@ wma_injection_ensure_helper(tp_wma_handle wma, uint8_t monitor_vdev_id,
 	peer.peer_type = WMI_PEER_TYPE_DEFAULT;
 	peer.vdev_id = helper->vdev_id;
 	status = wmi_unified_peer_create_send(wma->wmi_handle, &peer);
+	if (trace)
+		pr_err("qca_inject: helper peer vdev=%u status=%d\n",
+		       helper->vdev_id, status);
 	if (QDF_IS_STATUS_ERROR(status))
 		goto stop_vdev;
 	msleep(100);
@@ -261,6 +275,8 @@ static QDF_STATUS
 wma_injection_send(tp_wma_handle wma, qdf_nbuf_t nbuf,
 		   uint8_t monitor_vdev_id)
 {
+	static unsigned int trace_count;
+	bool trace = trace_count++ < 16;
 	struct wmi_mgmt_params params = {0};
 	struct wma_injection_slot *slot;
 	uint32_t chanfreq;
@@ -268,15 +284,31 @@ wma_injection_send(tp_wma_handle wma, qdf_nbuf_t nbuf,
 	QDF_STATUS status;
 
 	if (monitor_vdev_id >= wma->max_bssid ||
-	    !wma->interfaces[monitor_vdev_id].vdev)
+	    !wma->interfaces[monitor_vdev_id].vdev) {
+		if (trace)
+			pr_err("qca_inject: invalid monitor vdev=%u max=%u ptr=%p\n",
+			       monitor_vdev_id, wma->max_bssid,
+			       monitor_vdev_id < wma->max_bssid ?
+			       wma->interfaces[monitor_vdev_id].vdev : NULL);
 		return QDF_STATUS_E_INVAL;
+	}
 	chanfreq = wma->interfaces[monitor_vdev_id].ch_freq;
-	if (!chanfreq)
+	if (!chanfreq) {
+		if (trace)
+			pr_err("qca_inject: monitor vdev=%u has no channel frequency\n",
+			       monitor_vdev_id);
 		return QDF_STATUS_E_INVAL;
+	}
+	if (trace)
+		pr_err("qca_inject: WMA send vdev=%u freq=%u len=%u\n",
+		       monitor_vdev_id, chanfreq, qdf_nbuf_len(nbuf));
 
 	status = wma_injection_ensure_helper(wma, monitor_vdev_id, chanfreq);
-	if (QDF_IS_STATUS_ERROR(status))
+	if (QDF_IS_STATUS_ERROR(status)) {
+		if (trace)
+			pr_err("qca_inject: helper setup failed status=%d\n", status);
 		return status;
+	}
 
 	desc_id = wma_injection_next_desc();
 	slot = &wma_injection_ctx.slots[desc_id % WMA_INJECTION_SLOT_COUNT];
@@ -300,6 +332,9 @@ wma_injection_send(tp_wma_handle wma, qdf_nbuf_t nbuf,
 	slot->submitted = jiffies;
 	spin_unlock_bh(&wma_injection_ctx.lock);
 	status = wmi_mgmt_unified_cmd_send(wma->wmi_handle, &params);
+	if (trace)
+		pr_err("qca_inject: WMI mgmt send helper=%u desc=%u status=%d\n",
+		       params.vdev_id, desc_id, status);
 	if (QDF_IS_STATUS_ERROR(status)) {
 		spin_lock_bh(&wma_injection_ctx.lock);
 		if (slot->desc_id == desc_id)
@@ -311,6 +346,7 @@ wma_injection_send(tp_wma_handle wma, qdf_nbuf_t nbuf,
 
 static void wma_injection_work(struct work_struct *work)
 {
+	static unsigned int trace_count;
 	struct wma_injection_pending *pending;
 	unsigned long flags;
 	QDF_STATUS status;
@@ -330,6 +366,9 @@ static void wma_injection_work(struct work_struct *work)
 		status = wma_injection_send(wma_injection_ctx.wma,
 					    pending->nbuf,
 					    pending->monitor_vdev_id);
+		if (trace_count++ < 16)
+			pr_err("qca_inject: worker vdev=%u status=%d\n",
+			       pending->monitor_vdev_id, status);
 		if (QDF_IS_STATUS_ERROR(status)) {
 			wma_warn("Injection send failed: status=%d vdev=%u",
 				 status, pending->monitor_vdev_id);
@@ -392,6 +431,7 @@ QDF_STATUS wma_injection_tx(qdf_nbuf_t nbuf, uint8_t monitor_vdev_id)
 bool wma_injection_complete(void *wma_context, uint16_t desc_id,
 			    uint32_t status)
 {
+	static unsigned int trace_count;
 	tp_wma_handle wma = wma_context;
 	struct wma_injection_slot *slot;
 	qdf_nbuf_t nbuf;
@@ -407,6 +447,9 @@ bool wma_injection_complete(void *wma_context, uint16_t desc_id,
 	nbuf = slot->nbuf;
 	qdf_mem_zero(slot, sizeof(*slot));
 	spin_unlock_bh(&wma_injection_ctx.lock);
+	if (trace_count++ < 16)
+		pr_err("qca_inject: completion desc=%u status=%u\n",
+		       desc_id, status);
 	wma_info("Injection completion: desc=%u status=%u", desc_id, status);
 	wma_injection_unmap_free(wma, nbuf);
 	return true;
@@ -429,6 +472,8 @@ static void wma_injection_init(tp_wma_handle wma)
 	INIT_DELAYED_WORK(&wma_injection_ctx.reaper, wma_injection_reaper);
 	wma_injection_ctx.wma = wma;
 	wma_injection_ctx.active = true;
+	pr_err("qca_inject: WMA queue initialized max_vdev=%u\n",
+	       wma->max_bssid);
 	schedule_delayed_work(&wma_injection_ctx.reaper, HZ);
 }
 

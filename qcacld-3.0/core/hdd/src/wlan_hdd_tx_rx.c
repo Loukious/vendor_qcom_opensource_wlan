@@ -502,7 +502,8 @@ static bool hdd_monitor_tx_dev(struct hdd_adapter *adapter,
 	if (!adapter || !dev)
 		return false;
 
-	return wlan_hdd_is_session_type_monitor(adapter->device_mode) ||
+	return hdd_get_conparam() == QDF_GLOBAL_MONITOR_MODE ||
+	       wlan_hdd_is_session_type_monitor(adapter->device_mode) ||
 	       dev->type == ARPHRD_IEEE80211_RADIOTAP;
 }
 
@@ -607,15 +608,29 @@ static void hdd_monitor_mode_tx_inject(struct hdd_adapter *adapter,
 				       struct net_device *dev,
 				       struct sk_buff *skb)
 {
+	static unsigned int injection_trace_count;
+	bool trace = injection_trace_count++ < 16;
 	QDF_STATUS status;
 
 	if (!adapter || !adapter->deflink) {
+		if (trace)
+			pr_err("qca_inject: missing adapter/deflink\n");
 		kfree_skb(skb);
 		return;
 	}
 
-	if (!hdd_strip_radiotap(skb) ||
-	    !hdd_injection_frame_is_valid(skb)) {
+	if (!hdd_strip_radiotap(skb)) {
+		if (trace)
+			pr_err("qca_inject: radiotap validation failed len=%u\n",
+			       skb->len);
+		kfree_skb(skb);
+		return;
+	}
+
+	if (!hdd_injection_frame_is_valid(skb)) {
+		if (trace)
+			pr_err("qca_inject: 802.11 validation failed len=%u\n",
+			       skb->len);
 		hdd_dp_warn_rl("monitor tx: dropping invalid injection frame len %u",
 			       skb->len);
 		kfree_skb(skb);
@@ -625,11 +640,17 @@ static void hdd_monitor_mode_tx_inject(struct hdd_adapter *adapter,
 	status = wma_injection_tx((qdf_nbuf_t)skb,
 				  adapter->deflink->vdev_id);
 	if (QDF_IS_STATUS_ERROR(status)) {
+		if (trace)
+			pr_err("qca_inject: WMA enqueue failed vdev=%u status=%d\n",
+			       adapter->deflink->vdev_id, status);
 		hdd_dp_warn_rl("monitor tx: injection failed vdev %u status %d",
 			       adapter->deflink->vdev_id, status);
 		kfree_skb(skb);
 		return;
 	}
+	if (trace)
+		pr_err("qca_inject: WMA enqueue accepted vdev=%u len=%u\n",
+		       adapter->deflink->vdev_id, skb->len);
 
 	netif_trans_update(dev);
 }
@@ -651,6 +672,7 @@ static void hdd_monitor_mode_tx_inject(struct hdd_adapter *adapter,
 static void __hdd_hard_start_xmit(struct sk_buff *skb,
 				  struct net_device *dev)
 {
+	static unsigned int monitor_trace_count;
 	struct hdd_adapter *adapter = WLAN_HDD_GET_PRIV_PTR(dev);
 	struct hdd_tx_rx_stats *stats =
 				&adapter->deflink->hdd_stats.tx_rx_stats;
@@ -663,6 +685,9 @@ static void __hdd_hard_start_xmit(struct sk_buff *skb,
 
 #ifdef FEATURE_FRAME_INJECTION_SUPPORT
 	if (hdd_monitor_tx_dev(adapter, dev)) {
+		if (monitor_trace_count++ < 8)
+			pr_err("qca_inject: monitor ndo_start_xmit dev=%s mode=%d type=%u len=%u\n",
+			       dev->name, adapter->device_mode, dev->type, skb->len);
 		hdd_monitor_mode_tx_inject(adapter, dev, skb);
 		return;
 	}
