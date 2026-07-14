@@ -117,7 +117,6 @@ struct wma_injection_slot {
 struct wma_injection_helper {
 	bool created;
 	bool dp_attached;
-	bool up;
 	uint8_t vdev_id;
 	uint8_t monitor_vdev_id;
 	uint32_t chanfreq;
@@ -214,11 +213,6 @@ static void __wma_injection_destroy_helper(tp_wma_handle wma)
 	if (!helper->created || !wma || !wma->wmi_handle)
 		return;
 
-	if (helper->up) {
-		wmi_unified_vdev_down_send(wma->wmi_handle, helper->vdev_id);
-		helper->up = false;
-		msleep(100);
-	}
 	peer_delete.vdev_id = helper->vdev_id;
 	wmi_unified_peer_delete_send(wma->wmi_handle, helper->mac_addr,
 				     &peer_delete);
@@ -242,7 +236,6 @@ __wma_injection_ensure_helper(tp_wma_handle wma, uint8_t monitor_vdev_id,
 	struct vdev_create_params create = {0};
 	struct vdev_start_params start = {0};
 	struct vdev_set_params encap = {0};
-	struct vdev_up_params up = {0};
 	struct peer_create_params peer = {0};
 	struct wma_injection_helper *helper = &wma_injection_ctx.helper;
 	uint8_t *monitor_mac;
@@ -338,32 +331,11 @@ __wma_injection_ensure_helper(tp_wma_handle wma, uint8_t monitor_vdev_id,
 	if (QDF_IS_STATUS_ERROR(status))
 		goto stop_vdev;
 	msleep(100);
-	up.vdev_id = helper->vdev_id;
-	status = wmi_unified_vdev_up_send(wma->wmi_handle, helper->mac_addr,
-						  &up);
-	if (trace)
-		pr_err("qca_inject: helper up vdev=%u status=%d\n",
-		       helper->vdev_id, status);
-	if (QDF_IS_STATUS_ERROR(status))
-		goto delete_peer;
-	msleep(100);
-	helper->up = true;
 
 	helper->created = true;
 	wma_info("Injection helper ready: monitor=%u helper=%u freq=%u mac=%pM",
 		 monitor_vdev_id, helper->vdev_id, chanfreq, helper->mac_addr);
 	return QDF_STATUS_SUCCESS;
-
-delete_peer:
-	{
-		struct peer_delete_cmd_params delete = {
-			.vdev_id = helper->vdev_id,
-		};
-
-		wmi_unified_peer_delete_send(wma->wmi_handle,
-					     helper->mac_addr, &delete);
-		msleep(100);
-	}
 stop_vdev:
 	{
 		struct vdev_stop_params stop = { .vdev_id = helper->vdev_id };
