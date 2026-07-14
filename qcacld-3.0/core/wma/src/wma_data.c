@@ -450,7 +450,9 @@ bool wma_injection_complete(void *wma_context, uint16_t desc_id,
 	if (trace_count++ < 16)
 		pr_err("qca_inject: completion desc=%u status=%u\n",
 		       desc_id, status);
-	wma_info("Injection completion: desc=%u status=%u", desc_id, status);
+	if (status != WMI_MGMT_TX_COMP_TYPE_COMPLETE_OK)
+		wma_warn("Injection completion failed: desc=%u status=%u",
+			 desc_id, status);
 	wma_injection_unmap_free(wma, nbuf);
 	return true;
 }
