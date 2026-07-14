@@ -607,10 +607,9 @@ static void hdd_monitor_mode_tx_inject(struct hdd_adapter *adapter,
 				       struct net_device *dev,
 				       struct sk_buff *skb)
 {
-	void *soc = cds_get_context(QDF_MODULE_ID_SOC);
-	int ret;
+	QDF_STATUS status;
 
-	if (!soc || !adapter || !adapter->deflink) {
+	if (!adapter || !adapter->deflink) {
 		kfree_skb(skb);
 		return;
 	}
@@ -623,13 +622,11 @@ static void hdd_monitor_mode_tx_inject(struct hdd_adapter *adapter,
 		return;
 	}
 
-	skb->next = NULL;
-	QDF_NBUF_CB_MGMT_TXRX_DESC_ID(skb) = WMA_MGMT_TX_INJECTION_DESC_ID;
-	ret = cdp_mgmt_send_ext(soc, adapter->deflink->vdev_id,
-				(qdf_nbuf_t)skb, 0, 0, 0);
-	if (ret) {
+	status = wma_injection_tx((qdf_nbuf_t)skb,
+				  adapter->deflink->vdev_id);
+	if (QDF_IS_STATUS_ERROR(status)) {
 		hdd_dp_warn_rl("monitor tx: injection failed vdev %u status %d",
-			       adapter->deflink->vdev_id, ret);
+			       adapter->deflink->vdev_id, status);
 		kfree_skb(skb);
 		return;
 	}
