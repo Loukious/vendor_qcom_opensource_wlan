@@ -87,6 +87,7 @@
 #ifdef FEATURE_FRAME_INJECTION_SUPPORT
 #include <linux/jiffies.h>
 #include <linux/list.h>
+#include <linux/moduleparam.h>
 #include <linux/mutex.h>
 #include <linux/workqueue.h>
 #include "wlan_reg_services_api.h"
@@ -94,9 +95,17 @@
 #define WMA_INJECTION_DESC_BASE 0xf000
 #define WMA_INJECTION_DESC_MASK 0x0fff
 #define WMA_INJECTION_SLOT_COUNT 256
-#define WMA_INJECTION_INFLIGHT_LIMIT 1
-#define WMA_INJECTION_QUEUE_LIMIT 256
+#define WMA_INJECTION_INFLIGHT_DEFAULT 1
+#define WMA_INJECTION_INFLIGHT_MAX 32
+#define WMA_INJECTION_QUEUE_LIMIT 1024
 #define WMA_INJECTION_TIMEOUT (2 * HZ)
+
+static unsigned int wma_injection_inflight_limit =
+	WMA_INJECTION_INFLIGHT_DEFAULT;
+module_param_named(injection_inflight_limit, wma_injection_inflight_limit,
+		   uint, 0644);
+MODULE_PARM_DESC(injection_inflight_limit,
+		 "Maximum injected frames awaiting firmware completion");
 
 struct wma_injection_pending {
 	struct list_head node;
@@ -373,15 +382,18 @@ static void wma_injection_work(struct work_struct *work)
 {
 	static unsigned int trace_count;
 	struct wma_injection_pending *pending;
+	unsigned int in_flight_limit;
 	unsigned long flags;
 	QDF_STATUS status;
 
+	in_flight_limit = clamp_t(unsigned int,
+				  READ_ONCE(wma_injection_inflight_limit), 1,
+				  WMA_INJECTION_INFLIGHT_MAX);
 	while (true) {
 		spin_lock_irqsave(&wma_injection_ctx.lock, flags);
 		if (list_empty(&wma_injection_ctx.pending) ||
 		    wma_injection_ctx.paused ||
-		    wma_injection_ctx.in_flight >=
-					WMA_INJECTION_INFLIGHT_LIMIT) {
+		    wma_injection_ctx.in_flight >= in_flight_limit) {
 			spin_unlock_irqrestore(&wma_injection_ctx.lock, flags);
 			break;
 		}
@@ -559,7 +571,9 @@ static void wma_injection_init(tp_wma_handle wma)
 	wma_injection_ctx.wma = wma;
 	wma_injection_ctx.active = true;
 	pr_err("qca_inject: WMA queue initialized max_vdev=%u inflight=%u\n",
-	       wma->max_bssid, WMA_INJECTION_INFLIGHT_LIMIT);
+	       wma->max_bssid,
+	       clamp_t(unsigned int, READ_ONCE(wma_injection_inflight_limit),
+		       1, WMA_INJECTION_INFLIGHT_MAX));
 	schedule_delayed_work(&wma_injection_ctx.reaper, HZ);
 }
 
