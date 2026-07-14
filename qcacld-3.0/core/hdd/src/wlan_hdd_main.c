@@ -3441,6 +3441,11 @@ static int __hdd_mon_open(struct net_device *dev)
 	hdd_enter_dev(dev);
 
 	if (test_bit(DEVICE_IFACE_OPENED, &adapter->event_flags)) {
+#ifdef FEATURE_FRAME_INJECTION_SUPPORT
+		wlan_hdd_netif_queue_control(
+			adapter, WLAN_START_ALL_NETIF_QUEUE_N_CARRIER,
+			WLAN_CONTROL_PATH);
+#endif
 		hdd_debug_rl("Monitor interface is already up");
 		return 0;
 	}
@@ -3473,7 +3478,6 @@ static int __hdd_mon_open(struct net_device *dev)
 			hdd_err("hdd_start_adapters() successful !");
 		}
 		hdd_mon_turn_off_ps_and_wow(hdd_ctx);
-		set_bit(DEVICE_IFACE_OPENED, &adapter->event_flags);
 	}
 
 	if (con_mode != QDF_GLOBAL_MONITOR_MODE &&
@@ -3493,15 +3497,24 @@ static int __hdd_mon_open(struct net_device *dev)
 	if (!ret)
 		ret = hdd_enable_monitor_mode(dev);
 
-	if (!ret) {
-		param.policy = BBM_DRIVER_MODE_POLICY;
-		param.policy_info.driver_mode = QDF_GLOBAL_MONITOR_MODE;
-		ucfg_dp_bbm_apply_independent_policy(hdd_ctx->psoc, &param);
-		ucfg_dp_set_current_throughput_level(hdd_ctx->psoc,
-						     PLD_BUS_WIDTH_VERY_HIGH);
+	if (ret) {
+		clear_bit(DEVICE_IFACE_OPENED, &adapter->event_flags);
+		return ret;
 	}
 
-	return ret;
+	set_bit(DEVICE_IFACE_OPENED, &adapter->event_flags);
+#ifdef FEATURE_FRAME_INJECTION_SUPPORT
+	wlan_hdd_netif_queue_control(adapter,
+				     WLAN_START_ALL_NETIF_QUEUE_N_CARRIER,
+				     WLAN_CONTROL_PATH);
+#endif
+	param.policy = BBM_DRIVER_MODE_POLICY;
+	param.policy_info.driver_mode = QDF_GLOBAL_MONITOR_MODE;
+	ucfg_dp_bbm_apply_independent_policy(hdd_ctx->psoc, &param);
+	ucfg_dp_set_current_throughput_level(hdd_ctx->psoc,
+					     PLD_BUS_WIDTH_VERY_HIGH);
+
+	return 0;
 }
 
 /**

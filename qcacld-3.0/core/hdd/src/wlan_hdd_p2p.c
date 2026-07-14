@@ -885,6 +885,13 @@ struct wireless_dev *__wlan_hdd_add_virtual_intf(struct wiphy *wiphy,
 	if (QDF_IS_STATUS_ERROR(status))
 		return ERR_PTR(qdf_status_to_os_return(status));
 
+#ifdef FEATURE_FRAME_INJECTION_SUPPORT
+	/* Treat an unflagged iw/airmon-ng monitor VIF as full RX capture. */
+	if (mode == QDF_MONITOR_MODE &&
+	    !(*flags & QDF_MONITOR_FLAG_OTHER_BSS))
+		*flags |= QDF_MONITOR_FLAG_OTHER_BSS;
+#endif
+
 	if (mode == QDF_MONITOR_MODE &&
 	    !(QDF_MONITOR_FLAG_OTHER_BSS & *flags) &&
 	    !os_if_lpc_mon_intf_creation_allowed(hdd_ctx->psoc))
