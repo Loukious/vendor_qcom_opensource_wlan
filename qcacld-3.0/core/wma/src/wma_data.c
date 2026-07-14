@@ -116,6 +116,7 @@ struct wma_injection_slot {
 struct wma_injection_helper {
 	bool created;
 	bool dp_attached;
+	bool mgmt_over_wmi;
 	uint8_t vdev_id;
 	uint8_t monitor_vdev_id;
 	uint32_t chanfreq;
@@ -160,8 +161,14 @@ wma_injection_attach_dp(tp_wma_handle wma,
 	vdev_info.qdf_opmode = QDF_STA_MODE;
 	status = cdp_vdev_attach(soc,
 			wlan_objmgr_pdev_get_pdev_id(wma->pdev), &vdev_info);
-	if (QDF_IS_STATUS_SUCCESS(status))
+	if (QDF_IS_STATUS_SUCCESS(status)) {
 		helper->dp_attached = true;
+		helper->mgmt_over_wmi =
+			wmi_service_enabled(wma->wmi_handle,
+					    wmi_service_mgmt_tx_wmi);
+		if (helper->mgmt_over_wmi)
+			cdp_cfg_tx_set_is_mgmt_over_wmi_enabled(soc, false);
+	}
 
 	return status;
 }
@@ -181,8 +188,11 @@ wma_injection_detach_dp(struct wma_injection_helper *helper)
 		if (QDF_IS_STATUS_ERROR(status))
 			wma_warn("Injection helper DP detach failed: vdev=%u status=%d",
 				 helper->vdev_id, status);
+		if (helper->mgmt_over_wmi)
+			cdp_cfg_tx_set_is_mgmt_over_wmi_enabled(soc, true);
 	}
 	helper->dp_attached = false;
+	helper->mgmt_over_wmi = false;
 }
 
 static void wma_injection_unmap_free(tp_wma_handle wma, qdf_nbuf_t nbuf)
