@@ -147,32 +147,19 @@ wma_injection_attach_dp(tp_wma_handle wma,
 			struct wma_injection_helper *helper)
 {
 	ol_txrx_soc_handle soc = cds_get_context(QDF_MODULE_ID_SOC);
-	struct cdp_vdev_info vdev_info = {0};
 	cdp_config_param_type val = {0};
 	QDF_STATUS status;
 
-	if (!soc || !wma->pdev)
+	if (!soc || !wma->pdev ||
+	    helper->monitor_vdev_id >= wma->max_bssid ||
+	    !wma->interfaces[helper->monitor_vdev_id].vdev)
 		return QDF_STATUS_E_INVAL;
 
-	vdev_info.vdev_mac_addr = helper->mac_addr;
-	vdev_info.vdev_id = helper->vdev_id;
-	vdev_info.vdev_stats_id = helper->vdev_id;
-	vdev_info.op_mode = wlan_op_mode_sta;
-	vdev_info.subtype = wlan_op_subtype_none;
-	vdev_info.qdf_opmode = QDF_STA_MODE;
-	status = cdp_vdev_attach(soc,
-			wlan_objmgr_pdev_get_pdev_id(wma->pdev), &vdev_info);
-	if (QDF_IS_STATUS_ERROR(status))
-		return status;
-
-	helper->dp_attached = true;
 	val.cdp_vdev_param_tx_encap = htt_cmn_pkt_type_raw;
-	status = cdp_txrx_set_vdev_param(soc, helper->vdev_id,
+	status = cdp_txrx_set_vdev_param(soc, helper->monitor_vdev_id,
 					   CDP_TX_ENCAP_TYPE, val);
-	if (QDF_IS_STATUS_ERROR(status)) {
-		cdp_vdev_detach(soc, helper->vdev_id, NULL, NULL);
-		helper->dp_attached = false;
-	}
+	if (QDF_IS_STATUS_SUCCESS(status))
+		helper->dp_attached = true;
 
 	return status;
 }
@@ -180,19 +167,7 @@ wma_injection_attach_dp(tp_wma_handle wma,
 static void
 wma_injection_detach_dp(struct wma_injection_helper *helper)
 {
-	ol_txrx_soc_handle soc;
-	QDF_STATUS status;
-
-	if (!helper->dp_attached)
-		return;
-
-	soc = cds_get_context(QDF_MODULE_ID_SOC);
-	if (soc) {
-		status = cdp_vdev_detach(soc, helper->vdev_id, NULL, NULL);
-		if (QDF_IS_STATUS_ERROR(status))
-			wma_warn("Injection helper DP detach failed: vdev=%u status=%d",
-				 helper->vdev_id, status);
-	}
+	/* The monitor datapath vdev is owned and detached by normal teardown. */
 	helper->dp_attached = false;
 }
 
@@ -290,18 +265,18 @@ __wma_injection_ensure_helper(tp_wma_handle wma, uint8_t monitor_vdev_id,
 		pr_err("qca_inject: helper DP attached vdev=%u\n",
 		       helper->vdev_id);
 	if (helper->dp_attached) {
-		encap.vdev_id = helper->vdev_id;
+		encap.vdev_id = helper->monitor_vdev_id;
 		encap.param_id = wmi_vdev_param_tx_encap_type;
 		encap.param_value = htt_cmn_pkt_type_raw;
 		status = wmi_unified_vdev_set_param_send(wma->wmi_handle,
 							 &encap);
 		if (QDF_IS_STATUS_ERROR(status)) {
-			wma_warn("Injection helper raw encap unavailable: vdev=%u status=%d; using WMI",
-				 helper->vdev_id, status);
+			wma_warn("Monitor raw encap unavailable: vdev=%u status=%d; using WMI",
+				 helper->monitor_vdev_id, status);
 			wma_injection_detach_dp(helper);
 		} else if (trace) {
-			pr_err("qca_inject: helper raw encap vdev=%u status=%d\n",
-			       helper->vdev_id, status);
+			pr_err("qca_inject: monitor raw encap vdev=%u status=%d\n",
+			       helper->monitor_vdev_id, status);
 		}
 	}
 
@@ -443,7 +418,8 @@ wma_injection_send(tp_wma_handle wma, qdf_nbuf_t nbuf,
 
 	params.tx_frame = nbuf;
 	params.frm_len = qdf_nbuf_len(nbuf);
-	params.vdev_id = wma_injection_ctx.helper.vdev_id;
+	params.vdev_id = direct_dp ? monitor_vdev_id :
+					wma_injection_ctx.helper.vdev_id;
 	params.tx_type = GENERIC_NODOWLOAD_ACK_COMP_INDEX;
 	params.chanfreq = chanfreq;
 	params.desc_id = desc_id;
@@ -461,26 +437,20 @@ wma_injection_send(tp_wma_handle wma, qdf_nbuf_t nbuf,
 	if (direct_dp) {
 		soc = cds_get_context(QDF_MODULE_ID_SOC);
 		qdf_nbuf_set_next(nbuf, NULL);
+		QDF_NBUF_CB_MGMT_TXRX_DESC_ID(nbuf) = desc_id;
 		tx_exc.peer_id = CDP_INVALID_PEER;
-		tx_exc.tid = 0;
+		tx_exc.tid = CDP_INVALID_TID;
 		tx_exc.tx_encap_type = htt_cmn_pkt_type_raw;
 		tx_exc.sec_type = CDP_INVALID_SEC_TYPE;
 		unsent = soc ? cdp_tx_send_exc(soc, params.vdev_id, nbuf,
 					       &tx_exc) : nbuf;
 		if (trace)
-			pr_err("qca_inject: wifi3 raw send helper=%u desc=%u accepted=%u\n",
+			pr_err("qca_inject: wifi3 raw send monitor=%u desc=%u accepted=%u\n",
 			       params.vdev_id, desc_id, !unsent);
 		if (unsent) {
 			status = QDF_STATUS_E_BUSY;
 		} else {
-			/* wifi3 owns and frees an accepted exception-TX nbuf. */
-			spin_lock_bh(&wma_injection_ctx.lock);
-			if (slot->nbuf == nbuf && slot->desc_id == desc_id) {
-				qdf_mem_zero(slot, sizeof(*slot));
-				if (wma_injection_ctx.in_flight)
-					wma_injection_ctx.in_flight--;
-			}
-			spin_unlock_bh(&wma_injection_ctx.lock);
+			/* Completion releases this slot from the wifi3 free path. */
 			status = QDF_STATUS_SUCCESS;
 		}
 	} else {
@@ -505,6 +475,7 @@ wma_injection_send(tp_wma_handle wma, qdf_nbuf_t nbuf,
 static void wma_injection_work(struct work_struct *work)
 {
 	static unsigned int trace_count;
+	static unsigned int failure_trace_count;
 	struct wma_injection_pending *pending;
 	unsigned long flags;
 	QDF_STATUS status;
@@ -531,8 +502,9 @@ static void wma_injection_work(struct work_struct *work)
 			pr_err("qca_inject: worker vdev=%u status=%d\n",
 			       pending->monitor_vdev_id, status);
 		if (QDF_IS_STATUS_ERROR(status)) {
-			wma_warn("Injection send failed: status=%d vdev=%u",
-				 status, pending->monitor_vdev_id);
+			if (failure_trace_count++ < 16)
+				wma_warn("Injection send failed: status=%d vdev=%u",
+					 status, pending->monitor_vdev_id);
 			qdf_nbuf_free(pending->nbuf);
 		}
 		kfree(pending);
@@ -561,6 +533,10 @@ static void wma_injection_reaper(struct work_struct *work)
 				wma_warn("Direct injection completion timed out: desc=%u",
 					 slot->desc_id);
 			}
+			qdf_mem_zero(slot, sizeof(*slot));
+			if (wma_injection_ctx.in_flight)
+				wma_injection_ctx.in_flight--;
+			wake_worker = true;
 			spin_unlock_bh(&wma_injection_ctx.lock);
 			continue;
 		}
@@ -693,14 +669,13 @@ bool wma_injection_dp_complete(void *wma_context, qdf_nbuf_t nbuf,
 	}
 	spin_unlock_bh(&wma_injection_ctx.lock);
 
-	if (trace_count++ < 16)
+	if (trace_count++ < 16 && wake_worker)
 		pr_err("qca_inject: direct DP completion desc=%u status=%d matched=%u\n",
 		       desc_id, status, wake_worker);
-	qdf_nbuf_free(nbuf);
 	if (wake_worker && wma_injection_ctx.active)
 		schedule_work(&wma_injection_ctx.work);
 
-	return true;
+	return wake_worker;
 }
 
 void wma_injection_pre_stop_cleanup(void)
@@ -2052,8 +2027,6 @@ wma_mgmt_tx_ack_comp_hdlr(void *wma_context, qdf_nbuf_t netbuf, int32_t status)
 
 	desc_id = QDF_NBUF_CB_MGMT_TXRX_DESC_ID(netbuf);
 #ifdef FEATURE_FRAME_INJECTION_SUPPORT
-	if (wma_injection_dp_complete(wma_context, netbuf, status))
-		return;
 	if (desc_id == WMA_MGMT_TX_INJECTION_DESC_ID) {
 		qdf_nbuf_free(netbuf);
 		return;

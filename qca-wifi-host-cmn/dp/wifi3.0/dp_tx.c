@@ -57,6 +57,11 @@
 #include "wlan_dp_lapb_flow.h"
 #endif
 
+#ifdef FEATURE_FRAME_INJECTION_SUPPORT
+extern bool wma_injection_dp_complete(void *wma_context, qdf_nbuf_t nbuf,
+				      int32_t status);
+#endif
+
 /* Flag to skip CCE classify when mesh or tid override enabled */
 #define DP_TX_SKIP_CCE_CLASSIFY \
 	(DP_TXRX_HLOS_TID_OVERRIDE_ENABLED | DP_TX_MESH_ENABLED)
@@ -3357,6 +3362,10 @@ qdf_nbuf_t dp_tx_comp_free_buf(struct dp_soc *soc, struct dp_tx_desc_s *desc,
 	if (!dp_tdls_tx_comp_free_buff(soc, desc))
 		return NULL;
 
+#ifdef FEATURE_FRAME_INJECTION_SUPPORT
+	wma_injection_dp_complete(NULL, nbuf, 0);
+#endif
+
 	/* 0 : MSDU buffer, 1 : MLE */
 	if (desc->msdu_ext_desc) {
 		/* TSO free */
@@ -6553,6 +6562,10 @@ void dp_tx_comp_process_tx_status(struct dp_soc *soc,
 		dp_info_rl("invalid tx descriptor. nbuf NULL");
 		goto out;
 	}
+
+#ifdef FEATURE_FRAME_INJECTION_SUPPORT
+	wma_injection_dp_complete(NULL, nbuf, ts->status);
+#endif
 
 	length = dp_tx_get_pkt_len(tx_desc);
 
