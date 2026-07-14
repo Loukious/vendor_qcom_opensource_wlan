@@ -13837,12 +13837,24 @@ static void hdd_adapter_param_update_work(void *arg)
 
 QDF_STATUS hdd_init_adapter_ops_wq(struct hdd_context *hdd_ctx)
 {
+	QDF_STATUS status;
+
 	hdd_enter();
 
 	hdd_ctx->adapter_ops_wq =
 		qdf_alloc_high_prior_ordered_workqueue("hdd_adapter_ops_wq");
-	if (!hdd_ctx->adapter_ops_wq)
+	if (!hdd_ctx->adapter_ops_wq) {
+		hdd_exit();
 		return QDF_STATUS_E_NOMEM;
+	}
+
+	status = hdd_monitor_restore_work_init(hdd_ctx);
+	if (QDF_IS_STATUS_ERROR(status)) {
+		qdf_destroy_workqueue(0, hdd_ctx->adapter_ops_wq);
+		hdd_ctx->adapter_ops_wq = NULL;
+		hdd_exit();
+		return status;
+	}
 
 	hdd_exit();
 
@@ -13853,8 +13865,15 @@ void hdd_deinit_adapter_ops_wq(struct hdd_context *hdd_ctx)
 {
 	hdd_enter();
 
+	if (!hdd_ctx->adapter_ops_wq) {
+		hdd_exit();
+		return;
+	}
+
+	hdd_monitor_restore_work_deinit(hdd_ctx);
 	qdf_flush_workqueue(0, hdd_ctx->adapter_ops_wq);
 	qdf_destroy_workqueue(0, hdd_ctx->adapter_ops_wq);
+	hdd_ctx->adapter_ops_wq = NULL;
 
 	hdd_exit();
 }
