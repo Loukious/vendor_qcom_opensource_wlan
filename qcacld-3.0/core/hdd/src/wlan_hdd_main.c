@@ -16378,14 +16378,14 @@ void hdd_adapter_reset_station_ctx(struct hdd_adapter *adapter)
 #if defined(CONFIG_WIRELESS_EXT) && defined(FEATURE_FRAME_INJECTION_SUPPORT)
 static int hdd_monitor_wext_giwname(struct net_device *dev,
 				    struct iw_request_info *info,
-				    char *name, char *extra)
+				    union iwreq_data *wrqu, char *extra)
 {
 	static unsigned int trace_count;
 	bool trace = trace_count++ < 16;
 
 	if (trace)
 		pr_err("qca_probe: wext name enter dev=%s\n", dev->name);
-	strscpy(name, "IEEE 802.11", IFNAMSIZ);
+	strscpy(wrqu->name, "IEEE 802.11", IFNAMSIZ);
 	if (trace)
 		pr_err("qca_probe: wext name exit dev=%s\n", dev->name);
 
@@ -16394,7 +16394,7 @@ static int hdd_monitor_wext_giwname(struct net_device *dev,
 
 static int hdd_monitor_wext_giwmode(struct net_device *dev,
 				    struct iw_request_info *info,
-				    __u32 *mode, char *extra)
+				    union iwreq_data *wrqu, char *extra)
 {
 	static unsigned int trace_count;
 	bool trace = trace_count++ < 16;
@@ -16410,18 +16410,18 @@ static int hdd_monitor_wext_giwmode(struct net_device *dev,
 	if (ret)
 		return -EINVAL;
 
-	*mode = adapter->device_mode == QDF_MONITOR_MODE ?
+	wrqu->mode = adapter->device_mode == QDF_MONITOR_MODE ?
 		IW_MODE_MONITOR : IW_MODE_INFRA;
 	if (trace)
 		pr_err("qca_probe: wext mode exit dev=%s mode=%u\n",
-		       dev->name, *mode);
+		       dev->name, wrqu->mode);
 
 	return 0;
 }
 
 static int hdd_monitor_wext_giwfreq(struct net_device *dev,
 				    struct iw_request_info *info,
-				    struct iw_freq *freq, char *extra)
+				    union iwreq_data *wrqu, char *extra)
 {
 	static unsigned int trace_count;
 	bool trace = trace_count++ < 16;
@@ -16446,19 +16446,19 @@ static int hdd_monitor_wext_giwfreq(struct net_device *dev,
 		return -ENODATA;
 	}
 
-	freq->m = mon_ctx->freq;
-	freq->e = 6;
+	wrqu->freq.m = mon_ctx->freq;
+	wrqu->freq.e = 6;
 	if (trace)
 		pr_err("qca_probe: wext freq exit dev=%s mhz=%d\n",
-		       dev->name, freq->m);
+		       dev->name, wrqu->freq.m);
 
 	return 0;
 }
 
 static const iw_handler hdd_monitor_wext_handlers[] = {
-	[IW_IOCTL_IDX(SIOCGIWNAME)] = (iw_handler)hdd_monitor_wext_giwname,
-	[IW_IOCTL_IDX(SIOCGIWFREQ)] = (iw_handler)hdd_monitor_wext_giwfreq,
-	[IW_IOCTL_IDX(SIOCGIWMODE)] = (iw_handler)hdd_monitor_wext_giwmode,
+	[IW_IOCTL_IDX(SIOCGIWNAME)] = hdd_monitor_wext_giwname,
+	[IW_IOCTL_IDX(SIOCGIWFREQ)] = hdd_monitor_wext_giwfreq,
+	[IW_IOCTL_IDX(SIOCGIWMODE)] = hdd_monitor_wext_giwmode,
 };
 
 static const struct iw_handler_def hdd_monitor_wext_handler_def = {
