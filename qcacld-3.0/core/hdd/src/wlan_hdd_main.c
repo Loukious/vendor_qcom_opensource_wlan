@@ -16375,6 +16375,73 @@ void hdd_adapter_reset_station_ctx(struct hdd_adapter *adapter)
 	}
 }
 
+#if defined(CONFIG_WIRELESS_EXT) && defined(FEATURE_FRAME_INJECTION_SUPPORT)
+static int hdd_monitor_wext_giwname(struct net_device *dev,
+				    struct iw_request_info *info,
+				    char *name, char *extra)
+{
+	strscpy(name, "IEEE 802.11", IFNAMSIZ);
+
+	return 0;
+}
+
+static int hdd_monitor_wext_giwmode(struct net_device *dev,
+				    struct iw_request_info *info,
+				    __u32 *mode, char *extra)
+{
+	struct hdd_adapter *adapter = WLAN_HDD_GET_PRIV_PTR(dev);
+
+	if (hdd_validate_adapter(adapter))
+		return -EINVAL;
+
+	*mode = adapter->device_mode == QDF_MONITOR_MODE ?
+		IW_MODE_MONITOR : IW_MODE_INFRA;
+
+	return 0;
+}
+
+static int hdd_monitor_wext_giwfreq(struct net_device *dev,
+				    struct iw_request_info *info,
+				    struct iw_freq *freq, char *extra)
+{
+	struct hdd_adapter *adapter = WLAN_HDD_GET_PRIV_PTR(dev);
+	struct hdd_monitor_ctx *mon_ctx;
+
+	if (hdd_validate_adapter(adapter) ||
+	    adapter->device_mode != QDF_MONITOR_MODE)
+		return -EINVAL;
+
+	mon_ctx = WLAN_HDD_GET_MONITOR_CTX_PTR(adapter->deflink);
+	if (!mon_ctx->freq)
+		return -ENODATA;
+
+	freq->m = mon_ctx->freq;
+	freq->e = 6;
+
+	return 0;
+}
+
+static const iw_handler hdd_monitor_wext_handlers[] = {
+	[IW_IOCTL_IDX(SIOCGIWNAME)] = (iw_handler)hdd_monitor_wext_giwname,
+	[IW_IOCTL_IDX(SIOCGIWFREQ)] = (iw_handler)hdd_monitor_wext_giwfreq,
+	[IW_IOCTL_IDX(SIOCGIWMODE)] = (iw_handler)hdd_monitor_wext_giwmode,
+};
+
+static const struct iw_handler_def hdd_monitor_wext_handler_def = {
+	.num_standard = QDF_ARRAY_SIZE(hdd_monitor_wext_handlers),
+	.standard = hdd_monitor_wext_handlers,
+};
+
+static void hdd_register_monitor_wext(struct net_device *dev)
+{
+	dev->wireless_handlers = &hdd_monitor_wext_handler_def;
+}
+#else
+static inline void hdd_register_monitor_wext(struct net_device *dev)
+{
+}
+#endif
+
 int hdd_start_station_adapter(struct hdd_adapter *adapter)
 {
 	QDF_STATUS status;
@@ -16421,7 +16488,10 @@ int hdd_start_station_adapter(struct hdd_adapter *adapter)
 
 	hdd_adapter_reset_station_ctx(adapter);
 
-	hdd_register_wext(adapter->dev);
+	if (adapter->device_mode == QDF_MONITOR_MODE)
+		hdd_register_monitor_wext(adapter->dev);
+	else
+		hdd_register_wext(adapter->dev);
 	hdd_set_netdev_flags(adapter);
 
 	hdd_register_tx_flow_control(adapter,

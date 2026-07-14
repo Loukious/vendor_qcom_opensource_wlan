@@ -9830,43 +9830,6 @@ static const struct iw_priv_args we_private_args[] = {
 #endif /* WLAN_FEATURE_MOTION_DETECTION */
 };
 
-static int hdd_wext_giwname(struct net_device *dev,
-			    struct iw_request_info *info,
-			    char *name, char *extra)
-{
-	strscpy(name, "IEEE 802.11", IFNAMSIZ);
-
-	return 0;
-}
-
-static int hdd_wext_giwmode(struct net_device *dev,
-			    struct iw_request_info *info,
-			    __u32 *mode, char *extra)
-{
-	struct hdd_adapter *adapter = WLAN_HDD_GET_PRIV_PTR(dev);
-
-	if (hdd_validate_adapter(adapter))
-		return -EINVAL;
-
-	switch (adapter->device_mode) {
-	case QDF_MONITOR_MODE:
-		*mode = IW_MODE_MONITOR;
-		break;
-	case QDF_SAP_MODE:
-	case QDF_P2P_GO_MODE:
-		*mode = IW_MODE_MASTER;
-		break;
-	case QDF_IBSS_MODE:
-		*mode = IW_MODE_ADHOC;
-		break;
-	default:
-		*mode = IW_MODE_INFRA;
-		break;
-	}
-
-	return 0;
-}
-
 static int hdd_wext_giwfreq(struct net_device *dev,
 			    struct iw_request_info *info,
 			    struct iw_freq *freq, char *extra)
@@ -9902,11 +9865,9 @@ static int hdd_wext_giwfreq(struct net_device *dev,
 	return 0;
 }
 
-/* Aircrack-ng still uses these WEXT queries for interface discovery. */
+/* Aircrack-ng reads SIOCGIWFREQ instead of the nl80211 chandef. */
 static const iw_handler we_standard[] = {
-	[IW_IOCTL_IDX(SIOCGIWNAME)] = (iw_handler)hdd_wext_giwname,
 	[IW_IOCTL_IDX(SIOCGIWFREQ)] = (iw_handler)hdd_wext_giwfreq,
-	[IW_IOCTL_IDX(SIOCGIWMODE)] = (iw_handler)hdd_wext_giwmode,
 };
 
 const struct iw_handler_def we_handler_def = {
