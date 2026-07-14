@@ -31303,6 +31303,11 @@ static int __wlan_hdd_cfg80211_set_mon_ch(struct wiphy *wiphy,
 		return qdf_status_to_os_return(status);
 	}
 
+	status = wma_injection_prepare(adapter->deflink->vdev_id,
+				       chandef->chan->center_freq);
+	if (QDF_IS_STATUS_ERROR(status))
+		hdd_warn("failed to prepare monitor injection helper: %d", status);
+
 	hdd_exit();
 
 	return 0;

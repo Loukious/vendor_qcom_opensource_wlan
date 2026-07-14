@@ -43,12 +43,20 @@ typedef void *WMA_HANDLE;
 
 #ifdef FEATURE_FRAME_INJECTION_SUPPORT
 QDF_STATUS wma_injection_tx(qdf_nbuf_t nbuf, uint8_t monitor_vdev_id);
+QDF_STATUS wma_injection_prepare(uint8_t monitor_vdev_id,
+				 uint32_t chanfreq);
 bool wma_injection_complete(void *wma_handle, uint16_t desc_id,
 			    uint32_t status);
 void wma_injection_pre_stop_cleanup(void);
 #else
 static inline QDF_STATUS
 wma_injection_tx(qdf_nbuf_t nbuf, uint8_t monitor_vdev_id)
+{
+	return QDF_STATUS_E_NOSUPPORT;
+}
+
+static inline QDF_STATUS
+wma_injection_prepare(uint8_t monitor_vdev_id, uint32_t chanfreq)
 {
 	return QDF_STATUS_E_NOSUPPORT;
 }

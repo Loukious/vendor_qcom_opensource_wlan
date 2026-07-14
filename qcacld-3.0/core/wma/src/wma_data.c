@@ -87,7 +87,9 @@
 #ifdef FEATURE_FRAME_INJECTION_SUPPORT
 #include <linux/jiffies.h>
 #include <linux/list.h>
+#include <linux/mutex.h>
 #include <linux/workqueue.h>
+#include "wlan_reg_services_api.h"
 
 #define WMA_INJECTION_DESC_BASE 0xf000
 #define WMA_INJECTION_DESC_MASK 0x0fff
@@ -118,6 +120,7 @@ struct wma_injection_helper {
 
 static struct {
 	spinlock_t lock;
+	struct mutex helper_lock;
 	struct list_head pending;
 	struct work_struct work;
 	struct delayed_work reaper;
@@ -128,6 +131,7 @@ static struct {
 	uint16_t pending_count;
 	uint16_t in_flight;
 	bool active;
+	bool paused;
 } wma_injection_ctx;
 
 static void wma_injection_work(struct work_struct *work);
@@ -141,7 +145,7 @@ static void wma_injection_unmap_free(tp_wma_handle wma, qdf_nbuf_t nbuf)
 	qdf_nbuf_free(nbuf);
 }
 
-static void wma_injection_destroy_helper(tp_wma_handle wma)
+static void __wma_injection_destroy_helper(tp_wma_handle wma)
 {
 	struct peer_delete_cmd_params peer_delete = {0};
 	struct vdev_stop_params vdev_stop = {0};
@@ -164,8 +168,8 @@ static void wma_injection_destroy_helper(tp_wma_handle wma)
 }
 
 static QDF_STATUS
-wma_injection_ensure_helper(tp_wma_handle wma, uint8_t monitor_vdev_id,
-			    uint32_t chanfreq)
+__wma_injection_ensure_helper(tp_wma_handle wma, uint8_t monitor_vdev_id,
+			      uint32_t chanfreq)
 {
 	static unsigned int trace_count;
 	bool trace = trace_count++ < 8;
@@ -181,7 +185,7 @@ wma_injection_ensure_helper(tp_wma_handle wma, uint8_t monitor_vdev_id,
 	    helper->chanfreq == chanfreq)
 		return QDF_STATUS_SUCCESS;
 	if (helper->created)
-		wma_injection_destroy_helper(wma);
+		__wma_injection_destroy_helper(wma);
 
 	max_id = qdf_min((int)wma->max_bssid - 1,
 			 CFG_TGT_NUM_VDEV - 2);
@@ -223,8 +227,9 @@ wma_injection_ensure_helper(tp_wma_handle wma, uint8_t monitor_vdev_id,
 	start.channel.cfreq1 = chanfreq;
 	start.channel.phy_mode = chanfreq < 4000 ?
 				 WLAN_PHYMODE_11G : WLAN_PHYMODE_11A;
-	start.channel.maxregpower = 20;
-	start.channel.maxpower = 20;
+	start.channel.maxregpower =
+		wlan_reg_get_channel_reg_power_for_freq(wma->pdev, chanfreq);
+	start.channel.maxpower = start.channel.maxregpower;
 	status = wmi_unified_vdev_start_send(wma->wmi_handle, &start);
 	if (trace)
 		pr_err("qca_inject: helper start vdev=%u status=%d\n",
@@ -261,6 +266,13 @@ delete_vdev:
 fail:
 	qdf_mem_zero(helper, sizeof(*helper));
 	return status;
+}
+
+static void wma_injection_destroy_helper(tp_wma_handle wma)
+{
+	mutex_lock(&wma_injection_ctx.helper_lock);
+	__wma_injection_destroy_helper(wma);
+	mutex_unlock(&wma_injection_ctx.helper_lock);
 }
 
 static uint16_t wma_injection_next_desc(void)
@@ -305,10 +317,13 @@ wma_injection_send(tp_wma_handle wma, qdf_nbuf_t nbuf,
 		pr_err("qca_inject: WMA send vdev=%u freq=%u len=%u\n",
 		       monitor_vdev_id, chanfreq, qdf_nbuf_len(nbuf));
 
-	status = wma_injection_ensure_helper(wma, monitor_vdev_id, chanfreq);
+	mutex_lock(&wma_injection_ctx.helper_lock);
+	status = __wma_injection_ensure_helper(wma, monitor_vdev_id,
+					       chanfreq);
 	if (QDF_IS_STATUS_ERROR(status)) {
 		if (trace)
 			pr_err("qca_inject: helper setup failed status=%d\n", status);
+		mutex_unlock(&wma_injection_ctx.helper_lock);
 		return status;
 	}
 
@@ -317,6 +332,7 @@ wma_injection_send(tp_wma_handle wma, qdf_nbuf_t nbuf,
 	spin_lock_bh(&wma_injection_ctx.lock);
 	if (slot->nbuf) {
 		spin_unlock_bh(&wma_injection_ctx.lock);
+		mutex_unlock(&wma_injection_ctx.helper_lock);
 		return QDF_STATUS_E_BUSY;
 	}
 
@@ -349,6 +365,7 @@ wma_injection_send(tp_wma_handle wma, qdf_nbuf_t nbuf,
 		}
 		spin_unlock_bh(&wma_injection_ctx.lock);
 	}
+	mutex_unlock(&wma_injection_ctx.helper_lock);
 	return status;
 }
 
@@ -362,6 +379,7 @@ static void wma_injection_work(struct work_struct *work)
 	while (true) {
 		spin_lock_irqsave(&wma_injection_ctx.lock, flags);
 		if (list_empty(&wma_injection_ctx.pending) ||
+		    wma_injection_ctx.paused ||
 		    wma_injection_ctx.in_flight >=
 					WMA_INJECTION_INFLIGHT_LIMIT) {
 			spin_unlock_irqrestore(&wma_injection_ctx.lock, flags);
@@ -444,6 +462,46 @@ QDF_STATUS wma_injection_tx(qdf_nbuf_t nbuf, uint8_t monitor_vdev_id)
 	return QDF_STATUS_SUCCESS;
 }
 
+QDF_STATUS wma_injection_prepare(uint8_t monitor_vdev_id, uint32_t chanfreq)
+{
+	tp_wma_handle wma = wma_injection_ctx.wma;
+	QDF_STATUS status = QDF_STATUS_E_BUSY;
+	unsigned long flags;
+	uint16_t in_flight;
+	int retries = 200;
+
+	if (!wma_injection_ctx.active || !wma)
+		return QDF_STATUS_E_AGAIN;
+	if (!chanfreq || monitor_vdev_id >= wma->max_bssid ||
+	    !wma->interfaces[monitor_vdev_id].vdev)
+		return QDF_STATUS_E_INVAL;
+
+	spin_lock_irqsave(&wma_injection_ctx.lock, flags);
+	wma_injection_ctx.paused = true;
+	spin_unlock_irqrestore(&wma_injection_ctx.lock, flags);
+
+	mutex_lock(&wma_injection_ctx.helper_lock);
+	do {
+		spin_lock_irqsave(&wma_injection_ctx.lock, flags);
+		in_flight = wma_injection_ctx.in_flight;
+		spin_unlock_irqrestore(&wma_injection_ctx.lock, flags);
+		if (!in_flight)
+			break;
+		msleep(10);
+	} while (--retries);
+	if (!in_flight)
+		status = __wma_injection_ensure_helper(wma, monitor_vdev_id,
+						       chanfreq);
+	mutex_unlock(&wma_injection_ctx.helper_lock);
+
+	spin_lock_irqsave(&wma_injection_ctx.lock, flags);
+	wma_injection_ctx.paused = false;
+	spin_unlock_irqrestore(&wma_injection_ctx.lock, flags);
+	schedule_work(&wma_injection_ctx.work);
+
+	return status;
+}
+
 bool wma_injection_complete(void *wma_context, uint16_t desc_id,
 			    uint32_t status)
 {
@@ -494,6 +552,7 @@ static void wma_injection_init(tp_wma_handle wma)
 {
 	qdf_mem_zero(&wma_injection_ctx, sizeof(wma_injection_ctx));
 	spin_lock_init(&wma_injection_ctx.lock);
+	mutex_init(&wma_injection_ctx.helper_lock);
 	INIT_LIST_HEAD(&wma_injection_ctx.pending);
 	INIT_WORK(&wma_injection_ctx.work, wma_injection_work);
 	INIT_DELAYED_WORK(&wma_injection_ctx.reaper, wma_injection_reaper);
