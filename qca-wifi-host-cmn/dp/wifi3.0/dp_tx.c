@@ -4251,6 +4251,7 @@ dp_tx_send_exception(struct cdp_soc_t *soc_hdl, uint8_t vdev_id,
 		goto fail;
 
 	qdf_mem_zero(&msdu_info, sizeof(msdu_info));
+	msdu_info.peer_id = CDP_INVALID_PEER;
 
 	if (!tx_exc_metadata)
 		goto fail;
