@@ -3596,6 +3596,11 @@ qdf_nbuf_t dp_tx_send_msdu_multiple(struct dp_vdev *vdev, qdf_nbuf_t nbuf,
 			goto done;
 		}
 
+		if (msdu_info->frm_type == dp_tx_frm_raw &&
+		    msdu_info->is_tx_sniffer &&
+		    msdu_info->peer_id != CDP_INVALID_PEER)
+			tx_desc->peer_id = msdu_info->peer_id;
+
 		if (msdu_info->frm_type == dp_tx_frm_me) {
 			tx_desc->msdu_ext_desc->me_buffer =
 				(struct dp_tx_me_buf_t *)msdu_info->
@@ -4323,6 +4328,7 @@ dp_tx_send_exception(struct cdp_soc_t *soc_hdl, uint8_t vdev_id,
 		 */
 		msdu_info.tid = HTT_TX_EXT_TID_DEFAULT;
 		msdu_info.is_tx_sniffer = 1;
+		msdu_info.peer_id = tx_exc_metadata->peer_id;
 
 		nbuf = dp_tx_prepare_raw(vdev, nbuf, &raw_seg_info,
 					 &msdu_info);

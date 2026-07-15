@@ -221,6 +221,7 @@ struct dp_tx_queue {
  * @u.sg_info: Scatter Gather information for non-TSO SG frames
  * @meta_data: Mesh meta header information
  * @ppdu_cookie: 16-bit ppdu_cookie that has to be replayed back in completions
+ * @peer_id: target peer used for standalone RAW/sniffer transmission
  * @xmit_type: xmit type of packet Link (0)/MLD (1)
  * @gsn: global sequence for reinjected mcast packets
  * @vdev_id : vdev_id for reinjected mcast packets
@@ -247,6 +248,7 @@ struct dp_tx_msdu_info_s {
 	} u;
 	uint32_t meta_data[DP_TX_MSDU_INFO_META_DATA_DWORDS];
 	uint16_t ppdu_cookie;
+	uint16_t peer_id;
 	uint8_t xmit_type;
 #if defined(WLAN_FEATURE_11BE_MLO) && ((defined(WLAN_MLO_MULTI_CHIP) &&\
 	defined(WLAN_MCAST_MLO)) || defined(WLAN_MCAST_MLO_SAP))

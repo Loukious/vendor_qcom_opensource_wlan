@@ -1662,6 +1662,20 @@ dp_tx_hw_enqueue_be(struct dp_soc *soc, struct dp_vdev *vdev,
 	}
 
 	hal_tx_desc_cached = (void *)cached_desc;
+	if (msdu_info->is_tx_sniffer &&
+	    msdu_info->peer_id != CDP_INVALID_PEER) {
+		struct dp_peer *peer;
+
+		peer = dp_peer_get_ref_by_id(soc, msdu_info->peer_id,
+					     DP_MOD_ID_TX);
+		if (peer) {
+			ast_idx = peer->ast_idx;
+			ast_hash = peer->ast_hash;
+			hal_tx_desc_set_index_lookup_override(soc->hal_soc,
+						      hal_tx_desc_cached, 1);
+			dp_peer_unref_delete(peer, DP_MOD_ID_TX);
+		}
+	}
 
 	if (dp_sawf_tag_valid_get(tx_desc->nbuf)) {
 		dp_sawf_config_be(soc, hal_tx_desc_cached,
@@ -1718,10 +1732,11 @@ dp_tx_hw_enqueue_be(struct dp_soc *soc, struct dp_vdev *vdev,
 		static unsigned int raw_tcl_trace_count;
 
 		if (raw_tcl_trace_count++ < 32)
-			pr_err("qca_dpraw: tcl desc=%u vdev=%u bank=%u encap=%u op=%u ast=%u hash=%u lmac=%u bm=%u ring=%u dw0-7=%08x %08x %08x %08x %08x %08x %08x %08x\n",
-			       tx_desc->id, vdev->vdev_id, vdev->bank_id,
-			       vdev->tx_encap_type, vdev->opmode,
-			       vdev->bss_ast_idx, vdev->bss_ast_hash,
+			pr_err("qca_dpraw: tcl desc=%u vdev=%u peer=%u bank=%u encap=%u op=%u ast=%u hash=%u lmac=%u bm=%u ring=%u dw0-7=%08x %08x %08x %08x %08x %08x %08x %08x\n",
+			       tx_desc->id, vdev->vdev_id,
+			       msdu_info->peer_id, vdev->bank_id,
+			       vdev->tx_encap_type,
+			       vdev->opmode, ast_idx, ast_hash,
 			       vdev->lmac_id, bm_id, ring_id,
 			       hal_tx_desc_cached[0], hal_tx_desc_cached[1],
 			       hal_tx_desc_cached[2], hal_tx_desc_cached[3],
