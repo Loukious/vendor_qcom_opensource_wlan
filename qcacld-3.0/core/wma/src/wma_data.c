@@ -122,7 +122,6 @@ struct wma_injection_helper {
 	bool dp_attached;
 	bool dp_peer_attached;
 	bool flow_pool_mapped;
-	bool up;
 	uint8_t vdev_id;
 	uint8_t monitor_vdev_id;
 	uint16_t peer_id;
@@ -274,11 +273,6 @@ static void __wma_injection_destroy_helper(tp_wma_handle wma)
 	if (!wma || !wma->wmi_handle)
 		return;
 
-	if (helper->up) {
-		wmi_unified_vdev_down_send(wma->wmi_handle, helper->vdev_id);
-		helper->up = false;
-		msleep(50);
-	}
 	if (helper->fw_peer_created) {
 		peer_delete.vdev_id = helper->vdev_id;
 		wmi_unified_peer_delete_send(wma->wmi_handle,
@@ -312,7 +306,6 @@ __wma_injection_ensure_helper(tp_wma_handle wma, uint8_t monitor_vdev_id,
 	struct vdev_create_params create = {0};
 	struct vdev_start_params start = {0};
 	struct vdev_set_params encap = {0};
-	struct vdev_up_params up = {0};
 	struct peer_create_params peer = {0};
 	struct wma_injection_helper *helper = &wma_injection_ctx.helper;
 	ol_txrx_soc_handle soc = cds_get_context(QDF_MODULE_ID_SOC);
@@ -452,15 +445,11 @@ __wma_injection_ensure_helper(tp_wma_handle wma, uint8_t monitor_vdev_id,
 		       helper->vdev_id, helper->peer_id, peer_state_status,
 		       peer_authorize_status, fw_authorize_status);
 
-	stage = "vdev_up";
-	up.vdev_id = helper->vdev_id;
-	up.assoc_id = 1;
-	status = wmi_unified_vdev_up_send(wma->wmi_handle,
-					  helper->peer_addr, &up);
-	if (QDF_IS_STATUS_ERROR(status))
-		goto fail;
-	helper->up = true;
-	msleep(50);
+	/*
+	 * This helper has no object-manager/MLME vdev. Keep it STARTED: sending
+	 * VDEV_UP for a synthetic STA makes firmware dereference association
+	 * state owned by the normal MLME lifecycle and assert.
+	 */
 
 	helper->created = true;
 	wma_info("Injection TX helper ready: monitor=%u helper=%u peer=%u freq=%u mac=%pM bssid=%pM",
