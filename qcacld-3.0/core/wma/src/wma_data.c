@@ -499,7 +499,7 @@ static uint16_t wma_injection_next_desc(void)
 
 static uint16_t wma_injection_inflight_limit(void)
 {
-	return READ_ONCE(wma_injection_ctx.helper.up) ?
+	return READ_ONCE(wma_injection_ctx.helper.created) ?
 		WMA_INJECTION_DP_INFLIGHT_LIMIT : WMA_INJECTION_INFLIGHT_LIMIT;
 }
 
@@ -551,9 +551,10 @@ wma_injection_send(tp_wma_handle wma, qdf_nbuf_t nbuf,
 
 	desc_id = wma_injection_next_desc();
 	slot = &wma_injection_ctx.slots[desc_id % WMA_INJECTION_SLOT_COUNT];
-	direct_dp = wma_injection_ctx.helper.dp_attached &&
+	direct_dp = wma_injection_ctx.helper.created &&
+		    wma_injection_ctx.helper.dp_attached &&
 		    wma_injection_ctx.helper.dp_peer_attached &&
-		    wma_injection_ctx.helper.up;
+		    wma_injection_ctx.helper.wmi_started;
 	spin_lock_bh(&wma_injection_ctx.lock);
 	if (slot->nbuf) {
 		spin_unlock_bh(&wma_injection_ctx.lock);
