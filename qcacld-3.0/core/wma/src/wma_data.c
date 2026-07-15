@@ -117,6 +117,7 @@ struct wma_injection_slot {
 struct wma_injection_helper {
 	bool created;
 	bool dp_attached;
+	bool flow_pool_mapped;
 	uint8_t vdev_id;
 	uint8_t monitor_vdev_id;
 	uint32_t chanfreq;
@@ -155,11 +156,22 @@ wma_injection_attach_dp(tp_wma_handle wma,
 	    !wma->interfaces[helper->monitor_vdev_id].vdev)
 		return QDF_STATUS_E_INVAL;
 
+	status = cdp_flow_pool_map(soc, OL_TXRX_PDEV_ID,
+				   helper->monitor_vdev_id);
+	if (QDF_IS_STATUS_ERROR(status))
+		return status;
+	helper->flow_pool_mapped = true;
+
 	val.cdp_vdev_param_tx_encap = htt_cmn_pkt_type_raw;
 	status = cdp_txrx_set_vdev_param(soc, helper->monitor_vdev_id,
 					   CDP_TX_ENCAP_TYPE, val);
-	if (QDF_IS_STATUS_SUCCESS(status))
+	if (QDF_IS_STATUS_SUCCESS(status)) {
 		helper->dp_attached = true;
+	} else {
+		cdp_flow_pool_unmap(soc, OL_TXRX_PDEV_ID,
+				    helper->monitor_vdev_id);
+		helper->flow_pool_mapped = false;
+	}
 
 	return status;
 }
@@ -167,7 +179,12 @@ wma_injection_attach_dp(tp_wma_handle wma,
 static void
 wma_injection_detach_dp(struct wma_injection_helper *helper)
 {
-	/* The monitor datapath vdev is owned and detached by normal teardown. */
+	ol_txrx_soc_handle soc = cds_get_context(QDF_MODULE_ID_SOC);
+
+	if (helper->flow_pool_mapped && soc)
+		cdp_flow_pool_unmap(soc, OL_TXRX_PDEV_ID,
+				    helper->monitor_vdev_id);
+	helper->flow_pool_mapped = false;
 	helper->dp_attached = false;
 }
 
