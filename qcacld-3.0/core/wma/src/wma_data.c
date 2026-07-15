@@ -118,6 +118,7 @@ struct wma_injection_helper {
 	bool created;
 	bool wmi_created;
 	bool wmi_started;
+	bool wmi_up;
 	bool fw_peer_created;
 	bool dp_attached;
 	bool dp_peer_attached;
@@ -164,9 +165,9 @@ wma_injection_attach_dp(tp_wma_handle wma,
 	vdev_info.vdev_mac_addr = helper->mac_addr;
 	vdev_info.vdev_id = helper->vdev_id;
 	vdev_info.vdev_stats_id = helper->vdev_id;
-	vdev_info.op_mode = wlan_op_mode_sta;
+	vdev_info.op_mode = wlan_op_mode_ap;
 	vdev_info.subtype = wlan_op_subtype_none;
-	vdev_info.qdf_opmode = QDF_STA_MODE;
+	vdev_info.qdf_opmode = QDF_SAP_MODE;
 	status = cdp_vdev_attach(soc,
 			wlan_objmgr_pdev_get_pdev_id(wma->pdev), &vdev_info);
 	if (QDF_IS_STATUS_ERROR(status))
@@ -214,48 +215,6 @@ wma_injection_detach_dp(struct wma_injection_helper *helper)
 	helper->dp_attached = false;
 }
 
-static QDF_STATUS
-wma_injection_peer_assoc(tp_wma_handle wma,
-			 struct wma_injection_helper *helper)
-{
-	static const uint8_t rates_11g[] = {
-		0x82, 0x84, 0x8b, 0x96, 0x0c, 0x12, 0x18, 0x24,
-	};
-	static const uint8_t rates_11a[] = {
-		0x0c, 0x12, 0x18, 0x24, 0x30, 0x48, 0x60, 0x6c,
-	};
-	struct peer_assoc_params assoc = {0};
-	const uint8_t *rates;
-	uint8_t rate_count;
-	enum wlan_phymode phymode;
-
-	if (helper->chanfreq < 4000) {
-		rates = rates_11g;
-		rate_count = ARRAY_SIZE(rates_11g);
-		phymode = WLAN_PHYMODE_11G;
-	} else {
-		rates = rates_11a;
-		rate_count = ARRAY_SIZE(rates_11a);
-		phymode = WLAN_PHYMODE_11A;
-	}
-
-	assoc.vdev_id = helper->vdev_id;
-	assoc.peer_new_assoc = 1;
-	assoc.peer_associd = 1;
-	assoc.peer_listen_intval = 1;
-	assoc.peer_max_mpdu = 8191;
-	assoc.peer_nss = 1;
-	assoc.peer_phymode = wmi_host_to_fw_phymode(phymode);
-	assoc.auth_flag = 1;
-	assoc.is_wme_set = 1;
-	assoc.peer_legacy_rates.num_rates = rate_count;
-	qdf_mem_copy(assoc.peer_legacy_rates.rates, rates, rate_count);
-	qdf_mem_copy(assoc.peer_mac, helper->peer_addr,
-		     QDF_MAC_ADDR_SIZE);
-
-	return wmi_unified_peer_assoc_send(wma->wmi_handle, &assoc);
-}
-
 static void wma_injection_unmap_free(tp_wma_handle wma, qdf_nbuf_t nbuf)
 {
 #ifndef CONFIG_HL_SUPPORT
@@ -273,6 +232,11 @@ static void __wma_injection_destroy_helper(tp_wma_handle wma)
 	if (!wma || !wma->wmi_handle)
 		return;
 
+	if (helper->wmi_up) {
+		wmi_unified_vdev_down_send(wma->wmi_handle, helper->vdev_id);
+		helper->wmi_up = false;
+		msleep(50);
+	}
 	if (helper->fw_peer_created) {
 		peer_delete.vdev_id = helper->vdev_id;
 		wmi_unified_peer_delete_send(wma->wmi_handle,
@@ -305,6 +269,7 @@ __wma_injection_ensure_helper(tp_wma_handle wma, uint8_t monitor_vdev_id,
 	bool trace = trace_count++ < 8;
 	struct vdev_create_params create = {0};
 	struct vdev_start_params start = {0};
+	struct vdev_up_params up = {0};
 	struct vdev_set_params encap = {0};
 	struct peer_create_params peer = {0};
 	struct wma_injection_helper *helper = &wma_injection_ctx.helper;
@@ -347,14 +312,11 @@ __wma_injection_ensure_helper(tp_wma_handle wma, uint8_t monitor_vdev_id,
 	helper->mac_addr[0] = (helper->mac_addr[0] ^ 0x04) | 0x02;
 	helper->mac_addr[0] &= ~0x01;
 	qdf_mem_copy(helper->peer_addr, helper->mac_addr, QDF_MAC_ADDR_SIZE);
-	/* A STA vdev's BSS peer must not use the vdev's self address. */
-	helper->peer_addr[0] ^= 0x08;
-	helper->peer_addr[0] &= ~0x01;
 	helper->peer_id = CDP_INVALID_PEER;
 
 	stage = "vdev_create";
 	create.vdev_id = helper->vdev_id;
-	create.type = WMI_VDEV_TYPE_STA;
+	create.type = WMI_VDEV_TYPE_AP;
 	create.nss_2g = 1;
 	create.nss_5g = 1;
 	status = wmi_unified_vdev_create_send(wma->wmi_handle,
@@ -376,23 +338,6 @@ __wma_injection_ensure_helper(tp_wma_handle wma, uint8_t monitor_vdev_id,
 	status = wmi_unified_vdev_set_param_send(wma->wmi_handle, &encap);
 	if (QDF_IS_STATUS_ERROR(status))
 		goto fail;
-
-	stage = "vdev_start";
-	start.vdev_id = helper->vdev_id;
-	start.channel.mhz = chanfreq;
-	start.channel.cfreq1 = chanfreq;
-	start.channel.phy_mode = chanfreq < 4000 ?
-				 WLAN_PHYMODE_11G : WLAN_PHYMODE_11A;
-	start.channel.maxregpower =
-		wlan_reg_get_channel_reg_power_for_freq(wma->pdev, chanfreq);
-	start.channel.maxpower = start.channel.maxregpower;
-	start.preferred_tx_streams = 1;
-	start.preferred_rx_streams = 1;
-	status = wmi_unified_vdev_start_send(wma->wmi_handle, &start);
-	if (QDF_IS_STATUS_ERROR(status))
-		goto fail;
-	helper->wmi_started = true;
-	msleep(50);
 
 	stage = "dp_peer_create";
 	status = cdp_peer_create(soc, helper->vdev_id, helper->peer_addr);
@@ -428,10 +373,22 @@ __wma_injection_ensure_helper(tp_wma_handle wma, uint8_t monitor_vdev_id,
 	if (QDF_IS_STATUS_ERROR(status))
 		goto fail;
 
-	stage = "peer_assoc";
-	status = wma_injection_peer_assoc(wma, helper);
+	stage = "vdev_start";
+	start.vdev_id = helper->vdev_id;
+	start.channel.mhz = chanfreq;
+	start.channel.cfreq1 = chanfreq;
+	start.channel.phy_mode = chanfreq < 4000 ?
+				 WLAN_PHYMODE_11G : WLAN_PHYMODE_11A;
+	start.channel.maxregpower =
+		wlan_reg_get_channel_reg_power_for_freq(wma->pdev, chanfreq);
+	start.channel.maxpower = start.channel.maxregpower;
+	start.preferred_tx_streams = 1;
+	start.preferred_rx_streams = 1;
+	status = wmi_unified_vdev_start_send(wma->wmi_handle, &start);
 	if (QDF_IS_STATUS_ERROR(status))
 		goto fail;
+	helper->wmi_started = true;
+	msleep(50);
 
 	peer_state_status = cdp_peer_state_update(
 			soc, helper->peer_addr, OL_TXRX_PEER_STATE_AUTH);
@@ -445,11 +402,14 @@ __wma_injection_ensure_helper(tp_wma_handle wma, uint8_t monitor_vdev_id,
 		       helper->vdev_id, helper->peer_id, peer_state_status,
 		       peer_authorize_status, fw_authorize_status);
 
-	/*
-	 * This helper has no object-manager/MLME vdev. Keep it STARTED: sending
-	 * VDEV_UP for a synthetic STA makes firmware dereference association
-	 * state owned by the normal MLME lifecycle and assert.
-	 */
+	stage = "vdev_up";
+	up.vdev_id = helper->vdev_id;
+	status = wmi_unified_vdev_up_send(wma->wmi_handle,
+					  helper->mac_addr, &up);
+	if (QDF_IS_STATUS_ERROR(status))
+		goto fail;
+	helper->wmi_up = true;
+	msleep(50);
 
 	helper->created = true;
 	wma_info("Injection TX helper ready: monitor=%u helper=%u peer=%u freq=%u mac=%pM bssid=%pM",
@@ -554,7 +514,8 @@ wma_injection_send(tp_wma_handle wma, qdf_nbuf_t nbuf,
 	direct_dp = wma_injection_ctx.helper.created &&
 		    wma_injection_ctx.helper.dp_attached &&
 		    wma_injection_ctx.helper.dp_peer_attached &&
-		    wma_injection_ctx.helper.wmi_started;
+		    wma_injection_ctx.helper.wmi_started &&
+		    wma_injection_ctx.helper.wmi_up;
 	spin_lock_bh(&wma_injection_ctx.lock);
 	if (slot->nbuf) {
 		spin_unlock_bh(&wma_injection_ctx.lock);
