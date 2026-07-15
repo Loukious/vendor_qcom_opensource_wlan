@@ -23,7 +23,7 @@
 #include <qdf_notifier.h>
 #include <qdf_hang_event_notifier.h>
 
-static qdf_atomic_notifier_init(qdf_hang_event_notif_head)
+qdf_atomic_notifier_init(qdf_hang_event_notif_head)
 
 QDF_STATUS qdf_hang_event_register_notifier(qdf_notif_block *nb)
 {

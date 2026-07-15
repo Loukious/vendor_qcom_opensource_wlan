@@ -316,7 +316,7 @@ void dp_bus_bw_compute_timer_try_start(struct wlan_objmgr_psoc *psoc);
  *
  * Return: None
  */
-void dp_bus_bw_compute_timer_stop(struct wlan_objmgr_psoc *psoc);
+noinline void dp_bus_bw_compute_timer_stop(struct wlan_objmgr_psoc *psoc);
 
 /**
  * dp_bus_bw_compute_timer_try_stop() - try to stop the bandwidth timer

@@ -379,6 +379,14 @@ bool hdd_cm_is_connecting(struct wlan_hdd_link_info *link_info);
 bool hdd_cm_is_disconnected(struct wlan_hdd_link_info *link_info);
 
 /**
+ * hdd_cm_is_connected() - Function to check if vdev is connected or not
+ * @link_info: pointer to the link info structure
+ *
+ * Return: true if connected, false otherwise
+ */
+bool hdd_cm_is_connected(struct wlan_hdd_link_info *link_info);
+
+/**
  * hdd_cm_is_vdev_roaming() - Function to check roaming in progress
  * @link_info: pointer to the link_info structure
  *

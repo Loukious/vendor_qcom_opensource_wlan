@@ -617,8 +617,8 @@ static int dp_rx_thread_sub_loop(struct dp_rx_thread *rx_thread, bool *shutdown)
 			}
 
 			dp_debug("shutting down (%s) id %d pid %d",
-				 qdf_get_current_comm(), rx_thread->id,
-				 qdf_get_current_pid());
+				 current->comm, rx_thread->id,
+				 current->pid);
 			*shutdown = true;
 			break;
 		}
@@ -660,12 +660,12 @@ static int dp_rx_thread_sub_loop(struct dp_rx_thread *rx_thread, bool *shutdown)
 		if (qdf_atomic_test_and_clear_bit(RX_SUSPEND_EVENT,
 						  &rx_thread->event_flag)) {
 			dp_debug("received suspend ind (%s) id %d pid %d",
-				 qdf_get_current_comm(), rx_thread->id,
-				 qdf_get_current_pid());
+				 current->comm, rx_thread->id,
+				 current->pid);
 			qdf_event_set(&rx_thread->suspend_event);
 			dp_debug("waiting for resume (%s) id %d pid %d",
-				 qdf_get_current_comm(), rx_thread->id,
-				 qdf_get_current_pid());
+				 current->comm, rx_thread->id,
+				 current->pid);
 			qdf_wait_single_event(&rx_thread->resume_event, 0);
 		}
 		break;
@@ -694,12 +694,12 @@ static int dp_rx_thread_loop(void *arg)
 
 	tm_handle_cmn = rx_thread->rtm_handle_cmn;
 
-	qdf_set_user_nice(qdf_get_current_task(), -1);
+	qdf_set_user_nice(current, -1);
 	qdf_set_wake_up_idle(true);
 
 	qdf_event_set(&rx_thread->start_event);
-	dp_info("starting rx_thread (%s) id %d pid %d", qdf_get_current_comm(),
-		rx_thread->id, qdf_get_current_pid());
+	dp_info("starting rx_thread (%s) id %d pid %d", current->comm,
+		rx_thread->id, current->pid);
 	while (!shutdown) {
 		/* This implements the execution model algorithm */
 		dp_debug("sleeping");
@@ -723,8 +723,8 @@ static int dp_rx_thread_loop(void *arg)
 	}
 
 	/* If we get here the scheduler thread must exit */
-	dp_info("exiting (%s) id %d pid %d", qdf_get_current_comm(),
-		rx_thread->id, qdf_get_current_pid());
+	dp_info("exiting (%s) id %d pid %d", current->comm,
+		rx_thread->id, current->pid);
 	qdf_event_set(&rx_thread->shutdown_event);
 
 	return 0;
@@ -741,7 +741,7 @@ static int dp_rx_refill_thread_sub_loop(struct dp_rx_refill_thread *rx_thread,
 				qdf_event_set(&rx_thread->suspend_event);
 			}
 			dp_debug("shutting down (%s) pid %d",
-				 qdf_get_current_comm(), qdf_get_current_pid());
+				 current->comm, current->pid);
 			*shutdown = true;
 			break;
 		}
@@ -763,12 +763,12 @@ static int dp_rx_refill_thread_sub_loop(struct dp_rx_refill_thread *rx_thread,
 		if (qdf_atomic_test_and_clear_bit(RX_REFILL_SUSPEND_EVENT,
 						  &rx_thread->event_flag)) {
 			dp_debug("refill thread received suspend ind (%s) pid %d",
-				 qdf_get_current_comm(),
-				 qdf_get_current_pid());
+				 current->comm,
+				 current->pid);
 			qdf_event_set(&rx_thread->suspend_event);
 			dp_debug("refill thread waiting for resume (%s) pid %d",
-				 qdf_get_current_comm(),
-				 qdf_get_current_pid());
+				 current->comm,
+				 current->pid);
 			qdf_wait_single_event(&rx_thread->resume_event, 0);
 		}
 		break;
@@ -788,12 +788,12 @@ static int dp_rx_refill_thread_loop(void *arg)
 		return 0;
 	}
 
-	qdf_set_user_nice(qdf_get_current_task(), -1);
+	qdf_set_user_nice(current, -1);
 	qdf_set_wake_up_idle(true);
 
 	qdf_event_set(&rx_thread->start_event);
-	dp_info("starting rx_refill_thread (%s) pid %d", qdf_get_current_comm(),
-		qdf_get_current_pid());
+	dp_info("starting rx_refill_thread (%s) pid %d", current->comm,
+		current->pid);
 	while (!shutdown) {
 		/* This implements the execution model algorithm */
 		status =
@@ -815,8 +815,8 @@ static int dp_rx_refill_thread_loop(void *arg)
 	}
 
 	/* If we get here the scheduler thread must exit */
-	dp_info("exiting (%s) pid %d", qdf_get_current_comm(),
-		qdf_get_current_pid());
+	dp_info("exiting (%s) pid %d", current->comm,
+		current->pid);
 	qdf_event_set(&rx_thread->shutdown_event);
 
 	return 0;

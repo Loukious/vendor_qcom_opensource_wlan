@@ -9496,6 +9496,7 @@ void policy_mgr_activate_mlo_links_nlink(struct wlan_objmgr_psoc *psoc,
 
 	policy_mgr_debug("Num active links: %d", num_links);
 	link_info = &vdev->mlo_dev_ctx->link_ctx->links_info[0];
+	#pragma clang loop unroll(disable)
 	for (iter = 0; iter < WLAN_MAX_ML_BSS_LINKS; iter++) {
 		if (link_info->link_id == WLAN_INVALID_LINK_ID) {
 			link_info++;
@@ -9744,6 +9745,7 @@ policy_mgr_update_mlo_links_based_on_linkid_nlink(
 	}
 
 	link_info = &vdev->mlo_dev_ctx->link_ctx->links_info[0];
+	#pragma clang loop unroll(disable)
 	for (iter = 0; iter < WLAN_MAX_ML_BSS_LINKS; iter++) {
 		if (link_info->link_id == WLAN_INVALID_LINK_ID) {
 			link_info++;

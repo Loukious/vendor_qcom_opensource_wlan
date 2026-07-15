@@ -325,7 +325,8 @@ static void crypto_remove_entry(struct crypto_psoc_priv_obj *psoc,
 	TAILQ_INSERT_TAIL(free_list, crypto_entry, hash_list_elem);
 }
 
-static void crypto_free_list(struct crypto_psoc_priv_obj *psoc, void *ptr)
+static noinline void crypto_free_list(struct crypto_psoc_priv_obj *psoc,
+				      void *ptr)
 {
 	struct wlan_crypto_key_entry *crypto_entry, *hash_entry_next;
 

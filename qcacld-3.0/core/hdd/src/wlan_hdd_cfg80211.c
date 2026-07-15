@@ -229,6 +229,7 @@
 #include "wlan_ll_sap_api.h"
 #include "wlan_cfg80211_p2p.h"
 #include "wlan_ll_sap_api.h"
+#include "wlan_hdd_nss_mode_switch.h"
 
 
 /*
@@ -9230,6 +9231,11 @@ const struct nla_policy wlan_hdd_wifi_config_policy[
 		.type = NLA_U16 },
 	[QCA_WLAN_VENDOR_ATTR_CONFIG_FOLLOW_AP_PREFERENCE_FOR_CNDS_SELECT] = {
 		.type = NLA_U8},
+	[QCA_WLAN_VENDOR_ATTR_CONFIG_P2P_GO_BEACON_INTERVAL] = {
+		.type = NLA_U16},
+	[QCA_WLAN_VENDOR_ATTR_CONFIG_DFS_OWNER_DISABLE] = {
+		.type = NLA_U8},
+	[QCA_WLAN_VENDOR_ATTR_CONFIG_SET_NSS_ANT] = {.type = NLA_U8},
 	// MIUI ADD: WIFI_BugFixUpstream
 #ifdef WLAN_FEATURE_FAST_SAP_ACS
 	[QCA_WLAN_VENDOR_ATTR_CONFIG_SET_FAST_ACS] = {.type = NLA_U8},
@@ -13302,6 +13308,43 @@ static int hdd_reset_btm_abridge_flag(struct wlan_hdd_link_info *link_info,
 	return 0;
 }
 
+static int hdd_set_dfs_owner_disable(struct wlan_hdd_link_info *link_info,
+				     const struct nlattr *attr)
+{
+	uint8_t dfs_owner_disable;
+	struct hdd_context *hdd_ctx = WLAN_HDD_GET_CTX(link_info->adapter);
+
+	if (!hdd_ctx->wiphy || !hdd_ctx->wiphy->registered)
+		return -EINVAL;
+
+	dfs_owner_disable = nla_get_u8(attr);
+	hdd_debug("configure DFS owner disable %d", dfs_owner_disable);
+	ucfg_mlme_vendor_set_disable_dfs_master_capability(
+					hdd_ctx->psoc, dfs_owner_disable);
+	hdd_send_wiphy_regd_sync_event(hdd_ctx, false);
+
+	return 0;
+}
+
+static int hdd_set_p2p_go_bcn_int(struct wlan_hdd_link_info *link_info,
+				  const struct nlattr *attr)
+{
+	uint16_t bcn_int;
+	struct hdd_context *hdd_ctx = WLAN_HDD_GET_CTX(link_info->adapter);
+	QDF_STATUS status;
+
+	bcn_int = nla_get_u16(attr);
+	hdd_debug("configure P2P GO beacon interval %d", bcn_int);
+	status = sme_set_p2p_go_bcn_int(hdd_ctx->mac_handle,
+					link_info->vdev_id, bcn_int);
+	if (QDF_IS_STATUS_ERROR(status)) {
+		hdd_err("Failed to configure GO beacon interval");
+		return -EINVAL;
+	}
+
+	return 0;
+}
+
 #ifdef WLAN_FEATURE_11BE
 /**
  * hdd_set_eht_emlsr_capability() - Set EMLSR capability for EHT STA
@@ -13678,6 +13721,15 @@ out:
 	return ret;
 }
 
+static int
+hdd_config_set_nss_and_antenna_mode(struct wlan_hdd_link_info *link_info,
+				    const struct nlattr *attr)
+{
+	uint8_t nss = nla_get_u8(attr);
+
+	return wlan_hdd_set_nss_and_antenna_mode(link_info, nss, nss);
+}
+
 /**
  * typedef independent_setter_fn - independent attribute handler
  * @link_info: Link info pointer in HDD adapter
@@ -13827,6 +13879,12 @@ static const struct independent_setters independent_setters[] = {
 	 hdd_set_reduce_power_scan_mode},
 	{QCA_WLAN_VENDOR_ATTR_CONFIG_FOLLOW_AP_PREFERENCE_FOR_CNDS_SELECT,
 	 hdd_reset_btm_abridge_flag},
+	{QCA_WLAN_VENDOR_ATTR_CONFIG_DFS_OWNER_DISABLE,
+	 hdd_set_dfs_owner_disable},
+	{QCA_WLAN_VENDOR_ATTR_CONFIG_P2P_GO_BEACON_INTERVAL,
+	 hdd_set_p2p_go_bcn_int},
+	{QCA_WLAN_VENDOR_ATTR_CONFIG_SET_NSS_ANT,
+	 hdd_config_set_nss_and_antenna_mode},
 	// MIUI ADD: WIFI_BugFixUpstream
 #ifdef WLAN_FEATURE_FAST_SAP_ACS
 	{QCA_WLAN_VENDOR_ATTR_CONFIG_SET_FAST_ACS,
@@ -14596,6 +14654,26 @@ static int hdd_get_sta_keepalive_interval(struct wlan_hdd_link_info *link_info,
 
 	return 0;
 }
+
+static int hdd_get_dfs_owner_disable(struct wlan_hdd_link_info *link_info,
+				     struct sk_buff *skb,
+				     const struct nlattr *attr)
+{
+	bool dfs_master_capability = true;
+	struct hdd_context *hdd_ctx = WLAN_HDD_GET_CTX(link_info->adapter);
+
+	ucfg_mlme_get_dfs_master_capability(hdd_ctx->psoc,
+					    &dfs_master_capability);
+	hdd_debug("current DFS owner capability %d", dfs_master_capability);
+
+	if (nla_put_u8(skb, QCA_WLAN_VENDOR_ATTR_CONFIG_DFS_OWNER_DISABLE,
+		       (uint8_t)!dfs_master_capability)) {
+		hdd_err("nla_put failure");
+		return -EINVAL;
+	}
+
+	return 0;
+}
 /**
  * typedef config_getter_fn - get configuration handler
  * @link_info: Link info pointer in HDD adapter
@@ -14686,6 +14764,9 @@ static const struct config_getters config_getters[] = {
 	 {QCA_WLAN_VENDOR_ATTR_CONFIG_KEEP_ALIVE_INTERVAL,
 	  sizeof(uint16_t),
 	  hdd_get_sta_keepalive_interval},
+	{QCA_WLAN_VENDOR_ATTR_CONFIG_DFS_OWNER_DISABLE,
+	 sizeof(uint8_t),
+	 hdd_get_dfs_owner_disable},
 };
 
 /**
@@ -17671,6 +17752,8 @@ static int __wlan_hdd_cfg80211_get_preferred_freq_list(struct wiphy *wiphy,
 	struct hdd_adapter *adapter = WLAN_HDD_GET_PRIV_PTR(ndev);
 
 	hdd_enter_dev(wdev->netdev);
+	flush_work(&adapter->ipv4_notifier_work);
+	hdd_adapter_flush_ipv6_notifier_work(adapter);
 
 	if (QDF_GLOBAL_FTM_MODE == hdd_get_conparam()) {
 		hdd_err("Command not allowed in FTM mode");

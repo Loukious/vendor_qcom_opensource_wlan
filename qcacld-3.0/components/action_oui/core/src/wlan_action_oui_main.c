@@ -106,7 +106,7 @@ action_oui_destroy(struct action_oui_psoc_priv *psoc_priv)
 
 		ext_list = &oui_priv->extension_list;
 		qdf_mutex_acquire(&oui_priv->extension_lock);
-		while (!qdf_list_empty(ext_list)) {
+		while (ext_list->anchor.next != &ext_list->anchor) {
 			status = qdf_list_remove_front(ext_list, &node);
 			if (!QDF_IS_STATUS_SUCCESS(status)) {
 				action_oui_err("Invalid delete in action: %u",
@@ -511,4 +511,3 @@ bool wlan_action_oui_is_empty(struct wlan_objmgr_psoc *psoc,
 exit:
 	return empty;
 }
-

@@ -84,6 +84,7 @@ endif
 
 OBJS :=
 OBJS_DIRS :=
+WLAN_FLAT_SOURCE_OBJS ?= y
 
 define add-wlan-objs
 $(eval $(_add-wlan-objs))
@@ -116,6 +117,7 @@ HDD_SRC_DIR :=	$(HDD_DIR)/src
 
 HDD_INC := 	-I$(WLAN_ROOT)/$(HDD_INC_DIR) \
 		-I$(WLAN_ROOT)/$(HDD_SRC_DIR) \
+		-I$(WLAN_ROOT)/$(HDD_SRC_DIR)/p2phc
 
 HDD_OBJS := 	$(HDD_SRC_DIR)/wlan_hdd_assoc.o \
 		$(HDD_SRC_DIR)/wlan_hdd_cfg.o \
@@ -126,6 +128,7 @@ HDD_OBJS := 	$(HDD_SRC_DIR)/wlan_hdd_assoc.o \
 		$(HDD_SRC_DIR)/wlan_hdd_hostapd.o \
 		$(HDD_SRC_DIR)/wlan_hdd_ioctl.o \
 		$(HDD_SRC_DIR)/wlan_hdd_main.o \
+		$(HDD_SRC_DIR)/wlan_hdd_nss_mode_switch.o \
 		$(HDD_SRC_DIR)/wlan_hdd_object_manager.o \
 		$(HDD_SRC_DIR)/wlan_hdd_oemdata.o \
 		$(HDD_SRC_DIR)/wlan_hdd_p2p.o \
@@ -139,7 +142,10 @@ HDD_OBJS := 	$(HDD_SRC_DIR)/wlan_hdd_assoc.o \
 		$(HDD_SRC_DIR)/wlan_hdd_tx_rx.o \
 		$(HDD_SRC_DIR)/wlan_hdd_wmm.o \
 		$(HDD_SRC_DIR)/wlan_hdd_wowl.o\
-		$(HDD_SRC_DIR)/wlan_hdd_ll_lt_sap.o
+		$(HDD_SRC_DIR)/wlan_hdd_ll_lt_sap.o\
+		$(HDD_SRC_DIR)/p2phc/p2phc.o \
+		$(HDD_SRC_DIR)/p2phc/dlhc.o \
+		$(HDD_SRC_DIR)/p2phc/p2phc_switch.o
 
 ifeq ($(CONFIG_UNIT_TEST), y)
 HDD_OBJS += $(HDD_SRC_DIR)/wlan_hdd_unit_test.o
@@ -676,7 +682,7 @@ MAC_INC := 	-I$(WLAN_ROOT)/$(MAC_INC_DIR) \
 
 MAC_DPH_OBJS :=	$(MAC_SRC_DIR)/dph/dph_hash_table.o
 
-ifeq ($(KERNEL_SUPPORTS_NESTED_COMPOSITES),y)
+ifneq ($(filter y,$(KERNEL_SUPPORTS_NESTED_COMPOSITES) $(WLAN_FLAT_SOURCE_OBJS)),)
 MAC_LIM_OBJS := $(MAC_SRC_DIR)/pe/lim/lim_aid_mgmt.o \
 		$(MAC_SRC_DIR)/pe/lim/lim_admit_control.o \
 		$(MAC_SRC_DIR)/pe/lim/lim_api.o \
@@ -843,7 +849,7 @@ SME_INC := 	-I$(WLAN_ROOT)/$(SME_INC_DIR) \
 		-I$(WLAN_ROOT)/$(SME_SRC_DIR)/rrm \
 		-I$(WLAN_ROOT)/$(SME_SRC_DIR)/nan
 
-ifeq ($(KERNEL_SUPPORTS_NESTED_COMPOSITES),y)
+ifneq ($(filter y,$(KERNEL_SUPPORTS_NESTED_COMPOSITES) $(WLAN_FLAT_SOURCE_OBJS)),)
 SME_CSR_OBJS := $(SME_SRC_DIR)/csr/csr_api_roam.o \
 		$(SME_SRC_DIR)/csr/csr_api_scan.o \
 		$(SME_SRC_DIR)/csr/csr_cmd_process.o \
@@ -1738,6 +1744,16 @@ $(call add-wlan-objs,pkt_capture,$(PKT_CAPTURE_OBJS))
 ########## MGMT RX SRNG ##########
 
 MGMT_RX_SRNG_DIR := components/mgmt_rx_srng
+ifeq ($(CONFIG_FEATURE_MGMT_RX_OVER_SRNG), y)
+MGMT_RX_SRNG_OBJS := $(MGMT_RX_SRNG_DIR)/core/src/wlan_mgmt_rx_srng.o \
+		    $(MGMT_RX_SRNG_DIR)/dispatcher/src/wlan_mgmt_rx_srng_ucfg_api.o \
+		    components/target_if/mgmt_rx_srng/src/target_if_mgmt_rx_srng.o \
+		    $(MGMT_RX_SRNG_DIR)/dispatcher/src/wlan_mgmt_rx_srng_tgt_api.o
+ccflags-y += -DFEATURE_MGMT_RX_OVER_SRNG
+endif
+
+$(call add-wlan-objs,mgmt_rx_srng,$(MGMT_RX_SRNG_OBJS))
+
 MGMT_RX_SRNG_INC := -I$(WLAN_ROOT)/$(MGMT_RX_SRNG_DIR)/core/inc \
 		    -I$(WLAN_ROOT)/$(MGMT_RX_SRNG_DIR)/dispatcher/inc \
 		    -I$(WLAN_ROOT)/components/target_if/mgmt_rx_srng/inc
@@ -3831,6 +3847,9 @@ ccflags-$(CONFIG_WLAN_SYSFS_DFSNOL) += -DCONFIG_WLAN_SYSFS_DFSNOL
 ccflags-$(CONFIG_WLAN_SYSFS_WDS_MODE) += -DFEATURE_SYSFS_WDS_MODE
 ccflags-$(CONFIG_WLAN_SYSFS_ROAM_TRIGGER_BITMAP) += -DFEATURE_SYSFS_ROAM_TRIGGER_BITMAP
 cppflags-$(CONFIG_BCN_RATECODE_ENABLE) += -DWLAN_BCN_RATECODE_ENABLE
+CFLAGS_core/wma/src/wma_dev_if.o += -DWLAN_BCN_RATECODE_ENABLE
+CFLAGS_$(WMI_OBJ_DIR)/wmi_unified_tlv.o += -DWLAN_BCN_RATECODE_ENABLE
+CFLAGS_components/dp/dispatcher/src/wlan_dp_flow_ucfg_api.o += -DCONFIG_WLAN_SUPPORT_LAPB
 ccflags-$(CONFIG_WLAN_SYSFS_RF_TEST_MODE) += -DFEATURE_SYSFS_RF_TEST_MODE
 
 ifeq ($(CONFIG_LEAK_DETECTION), y)
@@ -3882,6 +3901,7 @@ ccflags-$(CONFIG_OFDM_SCRAMBLER_SEED) += -DWLAN_FEATURE_OFDM_SCRAMBLER_SEED
 
 ccflags-$(CONFIG_WLAN_FEATURE_MBSSID) += -DWLAN_FEATURE_MBSSID
 ccflags-$(CONFIG_WLAN_FEATURE_P2P_P2P_STA) += -DWLAN_FEATURE_P2P_P2P_STA
+ccflags-$(CONFIG_WLAN_FEATURE_MULTI_P2P) += -DWLAN_FEATURE_MULTI_P2P
 
 ifeq (y,$(findstring y, $(CONFIG_CNSS_GENL) $(CONFIG_CNSS_GENL_MODULE)))
 ccflags-y += -DCNSS_GENL
@@ -3958,7 +3978,9 @@ ccflags-$(CONFIG_WLAN_LOG_INFO) += -DWLAN_LOG_INFO
 ccflags-$(CONFIG_WLAN_LOG_DEBUG) += -DWLAN_LOG_DEBUG
 ccflags-$(CONFIG_WLAN_LOG_ENTER) += -DWLAN_LOG_ENTER
 ccflags-$(CONFIG_WLAN_LOG_EXIT) += -DWLAN_LOG_EXIT
+ccflags-$(CONFIG_WLAN_OPEN_SOURCE) += -DWLAN_OPEN_SOURCE
 ccflags-$(WLAN_OPEN_SOURCE) += -DWLAN_OPEN_SOURCE
+ccflags-$(CONFIG_WLAN_FEATURE_FAST_SAP_ACS) += -DWLAN_FEATURE_FAST_SAP_ACS
 ccflags-$(CONFIG_FEATURE_STATS_EXT) += -DWLAN_FEATURE_STATS_EXT
 ccflags-$(CONFIG_QCACLD_FEATURE_NAN) += -DWLAN_FEATURE_NAN
 ccflags-$(CONFIG_QCACLD_FEATURE_SON) += -DWLAN_FEATURE_SON
@@ -4006,7 +4028,7 @@ ccflags-$(CONFIG_REMOVE_PKT_LOG) += -DREMOVE_PKT_LOG
 ccflags-$(CONFIG_ATH_11AC_TXCOMPACT) += -DATH_11AC_TXCOMPACT
 
 #ENABLE HTT HTC tx completion
-ccflags-$(ENABLE_CE4_COMP_DISABLE_HTT_HTC_MISC_LIST) += -DENABLE_CE4_COMP_DISABLE_HTT_HTC_MISC_LIST
+ccflags-$(CONFIG_ENABLE_CE4_COMP_DISABLE_HTT_HTC_MISC_LIST) += -DENABLE_CE4_COMP_DISABLE_HTT_HTC_MISC_LIST
 
 #Enable PCI specific APIS (dma, etc)
 ccflags-$(CONFIG_HIF_PCI) += -DHIF_PCI

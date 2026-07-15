@@ -2668,12 +2668,14 @@ cm_roam_scan_filter(struct wlan_objmgr_psoc *psoc,
 			     rso_usr_cfg->bssid_favored_factor,
 			     MAX_BSSID_FAVORED);
 	}
+	#pragma clang loop unroll(disable)
 	for (i = 0; i < params->num_rssi_rejection_ap; i++)
 		mlme_debug("RSSI reject BSSID "QDF_MAC_ADDR_FMT" expected rssi %d remaining duration %d",
 			   QDF_MAC_ADDR_REF(params->rssi_rejection_ap[i].bssid.bytes),
 			   params->rssi_rejection_ap[i].expected_rssi,
 			   params->rssi_rejection_ap[i].reject_duration);
 
+	#pragma clang loop unroll(disable)
 	for (i = 0; i < params->num_bssid_preferred_list; i++)
 		mlme_debug("Preferred Bssid[%d]:"QDF_MAC_ADDR_FMT" score: %d", i,
 			   QDF_MAC_ADDR_REF(params->bssid_favored[i].bytes),

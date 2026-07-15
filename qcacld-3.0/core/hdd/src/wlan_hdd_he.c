@@ -360,7 +360,7 @@ sr_events_end:
 	return status;
 }
 
-static void hdd_sr_osif_events(struct wlan_objmgr_vdev *vdev,
+void hdd_sr_osif_events(struct wlan_objmgr_vdev *vdev,
 			       enum sr_osif_operation sr_osif_oper,
 			       enum sr_osif_reason_code sr_osif_rc)
 {

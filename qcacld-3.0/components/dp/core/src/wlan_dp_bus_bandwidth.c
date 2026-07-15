@@ -2246,7 +2246,7 @@ exit:
 	dp_bbm_apply_independent_policy(psoc, &param);
 }
 
-void dp_bus_bw_compute_timer_stop(struct wlan_objmgr_psoc *psoc)
+noinline void dp_bus_bw_compute_timer_stop(struct wlan_objmgr_psoc *psoc)
 {
 	dp_enter();
 

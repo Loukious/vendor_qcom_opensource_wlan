@@ -4134,9 +4134,9 @@ csr_roam_chk_lnk_assoc_ind(struct mac_context *mac_ctx, tSirSmeRsp *msg_ptr)
  *
  * Return: True if peer is present otherwise return false
  */
-static bool csr_if_peer_present(struct mac_context *mac_ctx,
-				uint8_t *bssid,
-				uint8_t *peer_macaddr)
+static noinline bool csr_if_peer_present(struct mac_context *mac_ctx,
+					 uint8_t *bssid,
+					 uint8_t *peer_macaddr)
 {
 	struct wlan_objmgr_peer *peer;
 	uint8_t pdev_id;
@@ -5902,6 +5902,12 @@ QDF_STATUS cm_csr_handle_diconnect_req(struct wlan_objmgr_vdev *vdev,
 	if (!session || !CSR_IS_SESSION_VALID(mac_ctx, vdev_id)) {
 		sme_err("session not found for vdev_id %d", vdev_id);
 		return QDF_STATUS_E_INVAL;
+	}
+
+	if (cm_csr_is_ss_wait_for_key(vdev_id)) {
+		mlme_debug("Stop Wait for key timer");
+		cm_stop_wait_for_key_timer(mac_ctx->psoc, vdev_id);
+		cm_csr_set_ss_none(vdev_id);
 	}
 
 	cm_csr_set_joining(vdev_id);

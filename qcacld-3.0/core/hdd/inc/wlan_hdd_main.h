@@ -4493,7 +4493,8 @@ void hdd_psoc_idle_timer_stop(struct hdd_context *hdd_ctx);
 int hdd_trigger_psoc_idle_restart(struct hdd_context *hdd_ctx);
 
 int hdd_start_adapter(struct hdd_adapter *adapter, bool rtnl_held);
-void hdd_populate_random_mac_addr(struct hdd_context *hdd_ctx, uint32_t num);
+noinline void
+hdd_populate_random_mac_addr(struct hdd_context *hdd_ctx, uint32_t num);
 /**
  * hdd_is_interface_up()- Check if the given interface is up
  * @adapter: interface to check

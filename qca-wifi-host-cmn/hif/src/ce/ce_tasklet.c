@@ -783,10 +783,11 @@ static int ce_poll_reap_by_id(struct hif_softc *scn, enum ce_id_type ce_id)
 	hif_record_ce_desc_event(scn, ce_id, HIF_CE_REAP_ENTRY,
 				 NULL, NULL, -1, 0);
 
+	#pragma clang loop unroll(disable)
 	for (i = 0; i < CE_LOOP_MAX_COUNT; i++) {
 		ce_per_engine_service(scn, ce_id);
 
-		if (ce_check_rx_pending(CE_state))
+		if (qdf_atomic_read(&CE_state->rx_pending))
 			hif_record_ce_desc_event(scn, ce_id,
 						 HIF_CE_TASKLET_REAP_REPOLL,
 						 NULL, NULL, -1, 0);
@@ -798,7 +799,7 @@ static int ce_poll_reap_by_id(struct hif_softc *scn, enum ce_id_type ce_id)
 	 * In an unlikely case, if frames are still pending to reap,
 	 * could be an infinite loop, so return -EBUSY.
 	 */
-	if (ce_check_rx_pending(CE_state) &&
+	if (qdf_atomic_read(&CE_state->rx_pending) &&
 	    i == CE_LOOP_MAX_COUNT)
 		return -EBUSY;
 

@@ -2559,7 +2559,7 @@ cm_validate_t2lm_scan_entry(struct scan_cache_entry *entry)
 }
 #endif
 
-static bool
+static noinline bool
 cm_check_and_update_bssid_hint_entry_bss_score(struct scan_cache_entry *entry,
 					       struct scoring_cfg *score_config,
 					       struct qdf_mac_addr *bssid_hint,
