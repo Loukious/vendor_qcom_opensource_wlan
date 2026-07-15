@@ -117,7 +117,9 @@ struct wma_injection_slot {
 struct wma_injection_helper {
 	bool created;
 	bool dp_attached;
+	bool dp_peer_attached;
 	bool flow_pool_mapped;
+	bool up;
 	uint8_t vdev_id;
 	uint8_t monitor_vdev_id;
 	uint32_t chanfreq;
@@ -148,31 +150,43 @@ wma_injection_attach_dp(tp_wma_handle wma,
 			struct wma_injection_helper *helper)
 {
 	ol_txrx_soc_handle soc = cds_get_context(QDF_MODULE_ID_SOC);
+	struct cdp_vdev_info vdev_info = {0};
 	cdp_config_param_type val = {0};
 	QDF_STATUS status;
 
-	if (!soc || !wma->pdev ||
-	    helper->monitor_vdev_id >= wma->max_bssid ||
-	    !wma->interfaces[helper->monitor_vdev_id].vdev)
+	if (!soc || !wma->pdev)
 		return QDF_STATUS_E_INVAL;
 
-	status = cdp_flow_pool_map(soc, OL_TXRX_PDEV_ID,
-				   helper->monitor_vdev_id);
+	vdev_info.vdev_mac_addr = helper->mac_addr;
+	vdev_info.vdev_id = helper->vdev_id;
+	vdev_info.vdev_stats_id = helper->vdev_id;
+	vdev_info.op_mode = wlan_op_mode_sta;
+	vdev_info.subtype = wlan_op_subtype_none;
+	vdev_info.qdf_opmode = QDF_STA_MODE;
+	status = cdp_vdev_attach(soc,
+			wlan_objmgr_pdev_get_pdev_id(wma->pdev), &vdev_info);
 	if (QDF_IS_STATUS_ERROR(status))
 		return status;
+	helper->dp_attached = true;
+
+	status = cdp_flow_pool_map(soc, OL_TXRX_PDEV_ID,
+				   helper->vdev_id);
+	if (QDF_IS_STATUS_ERROR(status))
+		goto detach_vdev;
 	helper->flow_pool_mapped = true;
 
 	val.cdp_vdev_param_tx_encap = htt_cmn_pkt_type_raw;
-	status = cdp_txrx_set_vdev_param(soc, helper->monitor_vdev_id,
+	status = cdp_txrx_set_vdev_param(soc, helper->vdev_id,
 					   CDP_TX_ENCAP_TYPE, val);
-	if (QDF_IS_STATUS_SUCCESS(status)) {
-		helper->dp_attached = true;
-	} else {
-		cdp_flow_pool_unmap(soc, OL_TXRX_PDEV_ID,
-				    helper->monitor_vdev_id);
-		helper->flow_pool_mapped = false;
-	}
+	if (QDF_IS_STATUS_SUCCESS(status))
+		return status;
 
+	cdp_flow_pool_unmap(soc, OL_TXRX_PDEV_ID, helper->vdev_id);
+	helper->flow_pool_mapped = false;
+
+detach_vdev:
+	cdp_vdev_detach(soc, helper->vdev_id, NULL, NULL);
+	helper->dp_attached = false;
 	return status;
 }
 
@@ -180,11 +194,23 @@ static void
 wma_injection_detach_dp(struct wma_injection_helper *helper)
 {
 	ol_txrx_soc_handle soc = cds_get_context(QDF_MODULE_ID_SOC);
+	QDF_STATUS status;
+
+	if (helper->dp_peer_attached && soc) {
+		cdp_peer_delete(soc, helper->vdev_id, helper->mac_addr, 0);
+		helper->dp_peer_attached = false;
+	}
 
 	if (helper->flow_pool_mapped && soc)
 		cdp_flow_pool_unmap(soc, OL_TXRX_PDEV_ID,
-				    helper->monitor_vdev_id);
+				    helper->vdev_id);
 	helper->flow_pool_mapped = false;
+	if (helper->dp_attached && soc) {
+		status = cdp_vdev_detach(soc, helper->vdev_id, NULL, NULL);
+		if (QDF_IS_STATUS_ERROR(status))
+			wma_warn("Injection helper DP detach failed: vdev=%u status=%d",
+				 helper->vdev_id, status);
+	}
 	helper->dp_attached = false;
 }
 
@@ -205,9 +231,22 @@ static void __wma_injection_destroy_helper(tp_wma_handle wma)
 	if (!helper->created || !wma || !wma->wmi_handle)
 		return;
 
+	if (helper->up) {
+		wmi_unified_vdev_down_send(wma->wmi_handle, helper->vdev_id);
+		helper->up = false;
+		msleep(100);
+	}
 	peer_delete.vdev_id = helper->vdev_id;
 	wmi_unified_peer_delete_send(wma->wmi_handle, helper->mac_addr,
 				     &peer_delete);
+	if (helper->dp_peer_attached) {
+		ol_txrx_soc_handle soc = cds_get_context(QDF_MODULE_ID_SOC);
+
+		if (soc)
+			cdp_peer_delete(soc, helper->vdev_id,
+					helper->mac_addr, 0);
+		helper->dp_peer_attached = false;
+	}
 	msleep(100);
 	vdev_stop.vdev_id = helper->vdev_id;
 	wmi_unified_vdev_stop_send(wma->wmi_handle, &vdev_stop);
@@ -228,6 +267,7 @@ __wma_injection_ensure_helper(tp_wma_handle wma, uint8_t monitor_vdev_id,
 	struct vdev_create_params create = {0};
 	struct vdev_start_params start = {0};
 	struct vdev_set_params encap = {0};
+	struct vdev_up_params up = {0};
 	struct peer_create_params peer = {0};
 	struct wma_injection_helper *helper = &wma_injection_ctx.helper;
 	uint8_t *monitor_mac;
@@ -282,18 +322,18 @@ __wma_injection_ensure_helper(tp_wma_handle wma, uint8_t monitor_vdev_id,
 		pr_err("qca_inject: helper DP attached vdev=%u\n",
 		       helper->vdev_id);
 	if (helper->dp_attached) {
-		encap.vdev_id = helper->monitor_vdev_id;
+		encap.vdev_id = helper->vdev_id;
 		encap.param_id = wmi_vdev_param_tx_encap_type;
 		encap.param_value = htt_cmn_pkt_type_raw;
 		status = wmi_unified_vdev_set_param_send(wma->wmi_handle,
 							 &encap);
 		if (QDF_IS_STATUS_ERROR(status)) {
-			wma_warn("Monitor raw encap unavailable: vdev=%u status=%d; using WMI",
-				 helper->monitor_vdev_id, status);
+			wma_warn("Injection helper raw encap unavailable: vdev=%u status=%d; using WMI",
+				 helper->vdev_id, status);
 			wma_injection_detach_dp(helper);
 		} else if (trace) {
-			pr_err("qca_inject: monitor raw encap vdev=%u status=%d\n",
-			       helper->monitor_vdev_id, status);
+			pr_err("qca_inject: helper raw encap vdev=%u status=%d\n",
+			       helper->vdev_id, status);
 		}
 	}
 
@@ -312,6 +352,23 @@ __wma_injection_ensure_helper(tp_wma_handle wma, uint8_t monitor_vdev_id,
 	if (QDF_IS_STATUS_ERROR(status))
 		goto delete_vdev;
 	msleep(150);
+	if (helper->dp_attached) {
+		ol_txrx_soc_handle soc = cds_get_context(QDF_MODULE_ID_SOC);
+
+		status = soc ? cdp_peer_create(soc, helper->vdev_id,
+					       helper->mac_addr) :
+				       QDF_STATUS_E_INVAL;
+		if (trace)
+			pr_err("qca_inject: helper DP peer vdev=%u status=%d\n",
+			       helper->vdev_id, status);
+		if (QDF_IS_STATUS_ERROR(status)) {
+			wma_warn("Injection helper DP peer unavailable: vdev=%u status=%d; using WMI",
+				 helper->vdev_id, status);
+			wma_injection_detach_dp(helper);
+		} else {
+			helper->dp_peer_attached = true;
+		}
+	}
 
 	peer.peer_addr = helper->mac_addr;
 	peer.peer_type = WMI_PEER_TYPE_DEFAULT;
@@ -322,12 +379,42 @@ __wma_injection_ensure_helper(tp_wma_handle wma, uint8_t monitor_vdev_id,
 		       helper->vdev_id, status);
 	if (QDF_IS_STATUS_ERROR(status))
 		goto stop_vdev;
-	msleep(100);
+	msleep(150);
+	if (helper->dp_attached && helper->dp_peer_attached) {
+		ol_txrx_soc_handle soc = cds_get_context(QDF_MODULE_ID_SOC);
+
+		status = cdp_peer_authorize(soc, helper->vdev_id,
+					    helper->mac_addr, 1);
+		if (trace)
+			pr_err("qca_inject: helper DP authorize vdev=%u status=%d\n",
+			       helper->vdev_id, status);
+
+		up.vdev_id = helper->vdev_id;
+		status = wmi_unified_vdev_up_send(wma->wmi_handle,
+						   helper->mac_addr, &up);
+		if (trace)
+			pr_err("qca_inject: helper up vdev=%u status=%d\n",
+			       helper->vdev_id, status);
+		if (QDF_IS_STATUS_ERROR(status))
+			goto delete_peer;
+		msleep(150);
+		helper->up = true;
+	}
 
 	helper->created = true;
 	wma_info("Injection helper ready: monitor=%u helper=%u freq=%u mac=%pM",
 		 monitor_vdev_id, helper->vdev_id, chanfreq, helper->mac_addr);
 	return QDF_STATUS_SUCCESS;
+delete_peer:
+	{
+		struct peer_delete_cmd_params delete = {
+			.vdev_id = helper->vdev_id,
+		};
+
+		wmi_unified_peer_delete_send(wma->wmi_handle,
+					     helper->mac_addr, &delete);
+		msleep(100);
+	}
 stop_vdev:
 	{
 		struct vdev_stop_params stop = { .vdev_id = helper->vdev_id };
@@ -373,7 +460,7 @@ static uint16_t wma_injection_next_desc(void)
 
 static uint16_t wma_injection_inflight_limit(void)
 {
-	return READ_ONCE(wma_injection_ctx.helper.dp_attached) ?
+	return READ_ONCE(wma_injection_ctx.helper.up) ?
 		WMA_INJECTION_DP_INFLIGHT_LIMIT : WMA_INJECTION_INFLIGHT_LIMIT;
 }
 
@@ -425,7 +512,9 @@ wma_injection_send(tp_wma_handle wma, qdf_nbuf_t nbuf,
 
 	desc_id = wma_injection_next_desc();
 	slot = &wma_injection_ctx.slots[desc_id % WMA_INJECTION_SLOT_COUNT];
-	direct_dp = wma_injection_ctx.helper.dp_attached;
+	direct_dp = wma_injection_ctx.helper.dp_attached &&
+		    wma_injection_ctx.helper.dp_peer_attached &&
+		    wma_injection_ctx.helper.up;
 	spin_lock_bh(&wma_injection_ctx.lock);
 	if (slot->nbuf) {
 		spin_unlock_bh(&wma_injection_ctx.lock);
@@ -435,8 +524,7 @@ wma_injection_send(tp_wma_handle wma, qdf_nbuf_t nbuf,
 
 	params.tx_frame = nbuf;
 	params.frm_len = qdf_nbuf_len(nbuf);
-	params.vdev_id = direct_dp ? monitor_vdev_id :
-					wma_injection_ctx.helper.vdev_id;
+	params.vdev_id = wma_injection_ctx.helper.vdev_id;
 	params.tx_type = GENERIC_NODOWLOAD_ACK_COMP_INDEX;
 	params.chanfreq = chanfreq;
 	params.desc_id = desc_id;

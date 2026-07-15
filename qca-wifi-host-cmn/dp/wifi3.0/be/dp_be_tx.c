@@ -1718,9 +1718,11 @@ dp_tx_hw_enqueue_be(struct dp_soc *soc, struct dp_vdev *vdev,
 		static unsigned int raw_tcl_trace_count;
 
 		if (raw_tcl_trace_count++ < 32)
-			pr_err("qca_dpraw: tcl desc=%u vdev=%u bank=%u encap=%u lmac=%u bm=%u ring=%u dw0-7=%08x %08x %08x %08x %08x %08x %08x %08x\n",
+			pr_err("qca_dpraw: tcl desc=%u vdev=%u bank=%u encap=%u op=%u ast=%u hash=%u lmac=%u bm=%u ring=%u dw0-7=%08x %08x %08x %08x %08x %08x %08x %08x\n",
 			       tx_desc->id, vdev->vdev_id, vdev->bank_id,
-			       vdev->tx_encap_type, vdev->lmac_id, bm_id, ring_id,
+			       vdev->tx_encap_type, vdev->opmode,
+			       vdev->bss_ast_idx, vdev->bss_ast_hash,
+			       vdev->lmac_id, bm_id, ring_id,
 			       hal_tx_desc_cached[0], hal_tx_desc_cached[1],
 			       hal_tx_desc_cached[2], hal_tx_desc_cached[3],
 			       hal_tx_desc_cached[4], hal_tx_desc_cached[5],
