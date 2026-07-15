@@ -225,6 +225,9 @@ __wma_injection_ensure_helper(tp_wma_handle wma, uint8_t monitor_vdev_id,
 	uint8_t *monitor_mac;
 	int retries;
 	QDF_STATUS status;
+	QDF_STATUS peer_state_status;
+	QDF_STATUS peer_authorize_status;
+	QDF_STATUS fw_authorize_status;
 
 	if (helper->created && helper->monitor_vdev_id == monitor_vdev_id &&
 	    helper->chanfreq == chanfreq)
@@ -268,6 +271,18 @@ __wma_injection_ensure_helper(tp_wma_handle wma, uint8_t monitor_vdev_id,
 		status = QDF_STATUS_E_AGAIN;
 		goto fail;
 	}
+
+	peer_state_status = cdp_peer_state_update(
+			soc, helper->mac_addr, OL_TXRX_PEER_STATE_AUTH);
+	peer_authorize_status = cdp_peer_authorize(
+			soc, monitor_vdev_id, helper->mac_addr, 1);
+	fw_authorize_status = wma_set_peer_param(
+			wma, helper->mac_addr, WMI_HOST_PEER_AUTHORIZE, 1,
+			monitor_vdev_id);
+	if (trace)
+		pr_err("qca_inject: authorize vdev=%u peer=%u state=%d host=%d fw=%d\n",
+		       monitor_vdev_id, helper->peer_id, peer_state_status,
+		       peer_authorize_status, fw_authorize_status);
 
 	helper->dp_peer_attached = true;
 	helper->up = true;

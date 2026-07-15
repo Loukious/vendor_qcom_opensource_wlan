@@ -304,6 +304,14 @@ void dp_tx_process_htt_completion_be(struct dp_soc *soc,
 	bool pairwise;
 
 	tx_status = HTT_TX_WBM_COMPLETION_V3_TX_STATUS_GET(htt_desc[0]);
+	if (tx_desc->frm_type == dp_tx_frm_raw) {
+		static unsigned int raw_htt_trace_count;
+
+		if (raw_htt_trace_count++ < 32)
+			pr_err("qca_dpraw: htt desc=%u status=%u dw0-4=%08x %08x %08x %08x %08x\n",
+			       tx_desc->id, tx_status, htt_desc[0], htt_desc[1],
+			       htt_desc[2], htt_desc[3], htt_desc[4]);
+	}
 	htt_handle = (struct htt_soc *)soc->htt_handle;
 	htt_wbm_event_record(htt_handle->htt_logger_handle, tx_status, status);
 
