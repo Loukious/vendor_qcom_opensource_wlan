@@ -926,7 +926,7 @@ struct dp_tx_ext_desc_elem_s *dp_tx_prepare_ext_desc(struct dp_vdev *vdev,
 	}
 
 	if (msdu_info->exception_fw &&
-			qdf_unlikely(vdev->mesh_vdev)) {
+	    qdf_unlikely(vdev->mesh_vdev || msdu_info->is_tx_sniffer)) {
 		qdf_mem_copy(&cached_ext_desc[HAL_TX_EXTENSION_DESC_LEN_BYTES],
 				&msdu_info->meta_data[0],
 				sizeof(struct htt_tx_msdu_desc_ext2_t));
@@ -1537,8 +1537,8 @@ static qdf_nbuf_t dp_tx_prepare_raw(struct dp_vdev *vdev, qdf_nbuf_t nbuf,
 	DP_STATS_INC_PKT(vdev, tx_i[msdu_info->xmit_type].raw.raw_pkt,
 			 1, qdf_nbuf_len(nbuf));
 
-	/* Continue only if frames are of DATA type */
-	if (!DP_FRAME_IS_DATA(qos_wh)) {
+	/* Monitor injection also carries management and control frames. */
+	if (!DP_FRAME_IS_DATA(qos_wh) && !msdu_info->is_tx_sniffer) {
 		DP_STATS_INC(vdev,
 			     tx_i[msdu_info->xmit_type].raw.invalid_raw_pkt_datatype,
 			     1);
@@ -1546,7 +1546,7 @@ static qdf_nbuf_t dp_tx_prepare_raw(struct dp_vdev *vdev, qdf_nbuf_t nbuf,
 		goto error;
 	}
 	/* SWAR for HW: Enable WEP bit in the AMSDU frames for RAW mode */
-	if (vdev->raw_mode_war &&
+	if (DP_FRAME_IS_DATA(qos_wh) && vdev->raw_mode_war &&
 	    (qos_wh->i_fc[0] & QDF_IEEE80211_FC0_SUBTYPE_QOS) &&
 	    (qos_wh->i_qos[0] & IEEE80211_QOS_AMSDU))
 		qos_wh->i_fc[1] |= IEEE80211_FC1_WEP;
@@ -4171,6 +4171,7 @@ dp_tx_send_exception(struct cdp_soc_t *soc_hdl, uint8_t vdev_id,
 	struct dp_soc *soc = cdp_soc_t_to_dp_soc(soc_hdl);
 	struct dp_pdev *pdev;
 	struct dp_tx_msdu_info_s msdu_info;
+	struct dp_tx_seg_info_s raw_seg_info = {0};
 	struct dp_vdev *vdev = dp_vdev_get_ref_by_id(soc, vdev_id,
 						     DP_MOD_ID_TX_EXCEPTION);
 	qdf_ether_header_t *eh;
@@ -4244,6 +4245,22 @@ dp_tx_send_exception(struct cdp_soc_t *soc_hdl, uint8_t vdev_id,
 	if (dp_tx_check_mesh_vdev(vdev, tx_exc_metadata)) {
 		dp_tx_err("Mesh mode is not supported in exception path");
 		goto fail;
+	}
+
+	/* RAW sniffer frames require an MSDU extension descriptor. */
+	if (tx_exc_metadata->is_tx_sniffer &&
+	    tx_exc_metadata->tx_encap_type == htt_cmn_pkt_type_raw) {
+		DP_STATS_INC_PKT(vdev, tx_i[xmit_type].sniffer_rcvd, 1,
+				 qdf_nbuf_len(nbuf));
+		dp_tx_add_tx_sniffer_meta_data(vdev, &msdu_info,
+					       tx_exc_metadata->ppdu_cookie);
+
+		nbuf = dp_tx_prepare_raw(vdev, nbuf, &raw_seg_info,
+					 &msdu_info);
+		if (!nbuf)
+			goto fail;
+
+		goto send_multiple;
 	}
 
 	/*
@@ -4348,6 +4365,8 @@ dp_tx_send_exception(struct cdp_soc_t *soc_hdl, uint8_t vdev_id,
 
 send_multiple:
 	nbuf = dp_tx_send_msdu_multiple(vdev, nbuf, &msdu_info);
+	if (qdf_unlikely(nbuf && msdu_info.frm_type == dp_tx_frm_raw))
+		dp_tx_raw_prepare_unset(vdev->pdev->soc, nbuf);
 
 fail:
 	if (vdev)
