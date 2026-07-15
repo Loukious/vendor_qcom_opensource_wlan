@@ -1713,6 +1713,20 @@ dp_tx_hw_enqueue_be(struct dp_soc *soc, struct dp_vdev *vdev,
 				      tx_desc->nbuf);
 	dp_tx_desc_set_ktimestamp(vdev, tx_desc);
 
+	if (msdu_info->frm_type == dp_tx_frm_raw &&
+	    msdu_info->is_tx_sniffer) {
+		static unsigned int raw_tcl_trace_count;
+
+		if (raw_tcl_trace_count++ < 32)
+			pr_err("qca_dpraw: tcl desc=%u vdev=%u bank=%u encap=%u lmac=%u bm=%u ring=%u dw0-7=%08x %08x %08x %08x %08x %08x %08x %08x\n",
+			       tx_desc->id, vdev->vdev_id, vdev->bank_id,
+			       vdev->tx_encap_type, vdev->lmac_id, bm_id, ring_id,
+			       hal_tx_desc_cached[0], hal_tx_desc_cached[1],
+			       hal_tx_desc_cached[2], hal_tx_desc_cached[3],
+			       hal_tx_desc_cached[4], hal_tx_desc_cached[5],
+			       hal_tx_desc_cached[6], hal_tx_desc_cached[7]);
+	}
+
 	hal_ring_hdl = dp_tx_get_hal_ring_hdl(soc, ring_id);
 
 	if (qdf_unlikely(dp_tx_hal_ring_access_start(soc, hal_ring_hdl))) {
