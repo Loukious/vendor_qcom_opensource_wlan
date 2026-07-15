@@ -4250,10 +4250,26 @@ dp_tx_send_exception(struct cdp_soc_t *soc_hdl, uint8_t vdev_id,
 	/* RAW sniffer frames require an MSDU extension descriptor. */
 	if (tx_exc_metadata->is_tx_sniffer &&
 	    tx_exc_metadata->tx_encap_type == htt_cmn_pkt_type_raw) {
+		struct htt_tx_msdu_desc_ext2_t *meta_data;
+
 		DP_STATS_INC_PKT(vdev, tx_i[xmit_type].sniffer_rcvd, 1,
 				 qdf_nbuf_len(nbuf));
 		dp_tx_add_tx_sniffer_meta_data(vdev, &msdu_info,
 					       tx_exc_metadata->ppdu_cookie);
+
+		/*
+		 * The public exception API only accepts data TIDs or INVALID, but
+		 * injected 802.11 management frames must use firmware's dedicated
+		 * management queue.  Leaving this INVALID can complete successfully
+		 * at TCL without producing a usable over-the-air frame.
+		 */
+		msdu_info.tid = HTT_TX_EXT_TID_MGMT;
+		meta_data = (struct htt_tx_msdu_desc_ext2_t *)
+				&msdu_info.meta_data[0];
+		meta_data->valid_encrypt_type = 1;
+		meta_data->encrypt_type = 0;
+		meta_data->valid_retries = 1;
+		meta_data->retry_limit = 1;
 
 		nbuf = dp_tx_prepare_raw(vdev, nbuf, &raw_seg_info,
 					 &msdu_info);
