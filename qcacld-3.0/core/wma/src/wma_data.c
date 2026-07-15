@@ -116,6 +116,9 @@ struct wma_injection_slot {
 
 struct wma_injection_helper {
 	bool created;
+	bool wmi_created;
+	bool wmi_started;
+	bool fw_peer_created;
 	bool dp_attached;
 	bool dp_peer_attached;
 	bool flow_pool_mapped;
@@ -151,31 +154,44 @@ wma_injection_attach_dp(tp_wma_handle wma,
 			struct wma_injection_helper *helper)
 {
 	ol_txrx_soc_handle soc = cds_get_context(QDF_MODULE_ID_SOC);
+	struct cdp_vdev_info vdev_info = {0};
 	cdp_config_param_type val = {0};
 	QDF_STATUS status;
 
-	if (!soc || !wma->pdev ||
-	    helper->monitor_vdev_id >= wma->max_bssid ||
-	    !wma->interfaces[helper->monitor_vdev_id].vdev)
+	if (!soc || !wma->pdev)
 		return QDF_STATUS_E_INVAL;
 
-	status = cdp_flow_pool_map(soc, OL_TXRX_PDEV_ID,
-				   helper->monitor_vdev_id);
+	vdev_info.vdev_mac_addr = helper->mac_addr;
+	vdev_info.vdev_id = helper->vdev_id;
+	vdev_info.vdev_stats_id = helper->vdev_id;
+	vdev_info.op_mode = wlan_op_mode_sta;
+	vdev_info.subtype = wlan_op_subtype_none;
+	vdev_info.qdf_opmode = QDF_STA_MODE;
+	status = cdp_vdev_attach(soc,
+			wlan_objmgr_pdev_get_pdev_id(wma->pdev), &vdev_info);
 	if (QDF_IS_STATUS_ERROR(status))
 		return status;
+	helper->dp_attached = true;
+
+	status = cdp_flow_pool_map(soc, OL_TXRX_PDEV_ID,
+				   helper->vdev_id);
+	if (QDF_IS_STATUS_ERROR(status))
+		goto detach_vdev;
 	helper->flow_pool_mapped = true;
 
 	val.cdp_vdev_param_tx_encap = htt_cmn_pkt_type_raw;
-	status = cdp_txrx_set_vdev_param(soc, helper->monitor_vdev_id,
+	status = cdp_txrx_set_vdev_param(soc, helper->vdev_id,
 					   CDP_TX_ENCAP_TYPE, val);
-	if (QDF_IS_STATUS_SUCCESS(status)) {
-		helper->dp_attached = true;
+	if (QDF_IS_STATUS_SUCCESS(status))
 		return status;
-	}
 
 	cdp_flow_pool_unmap(soc, OL_TXRX_PDEV_ID,
-			    helper->monitor_vdev_id);
+			    helper->vdev_id);
 	helper->flow_pool_mapped = false;
+
+detach_vdev:
+	cdp_vdev_detach(soc, helper->vdev_id, NULL, NULL);
+	helper->dp_attached = false;
 	return status;
 }
 
@@ -184,11 +200,17 @@ wma_injection_detach_dp(struct wma_injection_helper *helper)
 {
 	ol_txrx_soc_handle soc = cds_get_context(QDF_MODULE_ID_SOC);
 
+	if (helper->dp_peer_attached && soc)
+		cdp_peer_delete(soc, helper->vdev_id, helper->mac_addr, 0);
+	helper->dp_peer_attached = false;
+
 	if (helper->flow_pool_mapped && soc)
 		cdp_flow_pool_unmap(soc, OL_TXRX_PDEV_ID,
-				    helper->monitor_vdev_id);
+				    helper->vdev_id);
 	helper->flow_pool_mapped = false;
-	helper->dp_peer_attached = false;
+
+	if (helper->dp_attached && soc)
+		cdp_vdev_detach(soc, helper->vdev_id, NULL, NULL);
 	helper->dp_attached = false;
 }
 
@@ -202,14 +224,39 @@ static void wma_injection_unmap_free(tp_wma_handle wma, qdf_nbuf_t nbuf)
 
 static void __wma_injection_destroy_helper(tp_wma_handle wma)
 {
+	struct peer_delete_cmd_params peer_delete = {0};
+	struct vdev_stop_params vdev_stop = {0};
 	struct wma_injection_helper *helper = &wma_injection_ctx.helper;
 
-	if (!helper->created)
+	if (!wma || !wma->wmi_handle)
 		return;
 
+	if (helper->up) {
+		wmi_unified_vdev_down_send(wma->wmi_handle, helper->vdev_id);
+		helper->up = false;
+		msleep(50);
+	}
+	if (helper->fw_peer_created) {
+		peer_delete.vdev_id = helper->vdev_id;
+		wmi_unified_peer_delete_send(wma->wmi_handle,
+					     helper->mac_addr, &peer_delete);
+		helper->fw_peer_created = false;
+		msleep(50);
+	}
+	if (helper->wmi_started) {
+		vdev_stop.vdev_id = helper->vdev_id;
+		wmi_unified_vdev_stop_send(wma->wmi_handle, &vdev_stop);
+		helper->wmi_started = false;
+		msleep(50);
+	}
 	wma_injection_detach_dp(helper);
-	wma_info("Injection monitor datapath released: vdev=%u",
-		 helper->monitor_vdev_id);
+	if (helper->wmi_created) {
+		wmi_unified_vdev_delete_send(wma->wmi_handle, helper->vdev_id);
+		helper->wmi_created = false;
+		msleep(50);
+	}
+	wma_info("Injection helper released: monitor=%u helper=%u",
+		 helper->monitor_vdev_id, helper->vdev_id);
 	qdf_mem_zero(helper, sizeof(*helper));
 }
 
@@ -219,11 +266,15 @@ __wma_injection_ensure_helper(tp_wma_handle wma, uint8_t monitor_vdev_id,
 {
 	static unsigned int trace_count;
 	bool trace = trace_count++ < 8;
+	struct vdev_create_params create = {0};
+	struct vdev_start_params start = {0};
 	struct vdev_set_params encap = {0};
+	struct vdev_up_params up = {0};
+	struct peer_create_params peer = {0};
 	struct wma_injection_helper *helper = &wma_injection_ctx.helper;
 	ol_txrx_soc_handle soc = cds_get_context(QDF_MODULE_ID_SOC);
 	uint8_t *monitor_mac;
-	int retries;
+	int i, max_id, retries;
 	QDF_STATUS status;
 	QDF_STATUS peer_state_status;
 	QDF_STATUS peer_authorize_status;
@@ -243,25 +294,76 @@ __wma_injection_ensure_helper(tp_wma_handle wma, uint8_t monitor_vdev_id,
 	if (!monitor_mac)
 		return QDF_STATUS_E_INVAL;
 
-	helper->vdev_id = monitor_vdev_id;
+	max_id = qdf_min((int)wma->max_bssid - 1,
+			 CFG_TGT_NUM_VDEV - 2);
+	for (i = max_id; i >= 0; i--)
+		if (i != monitor_vdev_id && !wma->interfaces[i].vdev)
+			break;
+	if (i < 0)
+		return QDF_STATUS_E_RESOURCES;
+
+	helper->vdev_id = i;
 	helper->monitor_vdev_id = monitor_vdev_id;
 	helper->chanfreq = chanfreq;
 	qdf_mem_copy(helper->mac_addr, monitor_mac, QDF_MAC_ADDR_SIZE);
+	/* The monitor address already has the local bit set. */
+	helper->mac_addr[0] = (helper->mac_addr[0] ^ 0x04) | 0x02;
+	helper->mac_addr[0] &= ~0x01;
 	helper->peer_id = CDP_INVALID_PEER;
+
+	create.vdev_id = helper->vdev_id;
+	create.type = WMI_VDEV_TYPE_STA;
+	create.nss_2g = 1;
+	create.nss_5g = 1;
+	status = wmi_unified_vdev_create_send(wma->wmi_handle,
+					      helper->mac_addr, &create);
+	if (QDF_IS_STATUS_ERROR(status))
+		goto fail;
+	helper->wmi_created = true;
+	msleep(50);
 
 	status = wma_injection_attach_dp(wma, helper);
 	if (QDF_IS_STATUS_ERROR(status))
 		goto fail;
 
-	encap.vdev_id = monitor_vdev_id;
+	encap.vdev_id = helper->vdev_id;
 	encap.param_id = wmi_vdev_param_tx_encap_type;
 	encap.param_value = htt_cmn_pkt_type_raw;
 	status = wmi_unified_vdev_set_param_send(wma->wmi_handle, &encap);
 	if (QDF_IS_STATUS_ERROR(status))
 		goto fail;
 
+	start.vdev_id = helper->vdev_id;
+	start.channel.mhz = chanfreq;
+	start.channel.cfreq1 = chanfreq;
+	start.channel.phy_mode = chanfreq < 4000 ?
+				 WLAN_PHYMODE_11G : WLAN_PHYMODE_11A;
+	start.channel.maxregpower =
+		wlan_reg_get_channel_reg_power_for_freq(wma->pdev, chanfreq);
+	start.channel.maxpower = start.channel.maxregpower;
+	start.preferred_tx_streams = 1;
+	start.preferred_rx_streams = 1;
+	status = wmi_unified_vdev_start_send(wma->wmi_handle, &start);
+	if (QDF_IS_STATUS_ERROR(status))
+		goto fail;
+	helper->wmi_started = true;
+	msleep(50);
+
+	status = cdp_peer_create(soc, helper->vdev_id, helper->mac_addr);
+	if (QDF_IS_STATUS_ERROR(status))
+		goto fail;
+	helper->dp_peer_attached = true;
+
+	peer.peer_addr = helper->mac_addr;
+	peer.peer_type = WMI_PEER_TYPE_DEFAULT;
+	peer.vdev_id = helper->vdev_id;
+	status = wmi_unified_peer_create_send(wma->wmi_handle, &peer);
+	if (QDF_IS_STATUS_ERROR(status))
+		goto fail;
+	helper->fw_peer_created = true;
+
 	for (retries = 0; retries < 20; retries++) {
-		helper->peer_id = cdp_get_peer_id(soc, monitor_vdev_id,
+		helper->peer_id = cdp_get_peer_id(soc, helper->vdev_id,
 						 helper->mac_addr);
 		if (helper->peer_id != CDP_INVALID_PEER)
 			break;
@@ -272,35 +374,45 @@ __wma_injection_ensure_helper(tp_wma_handle wma, uint8_t monitor_vdev_id,
 		goto fail;
 	}
 
+	status = cdp_peer_setup(soc, helper->vdev_id, helper->mac_addr, NULL);
+	if (QDF_IS_STATUS_ERROR(status))
+		goto fail;
+
 	peer_state_status = cdp_peer_state_update(
 			soc, helper->mac_addr, OL_TXRX_PEER_STATE_AUTH);
 	peer_authorize_status = cdp_peer_authorize(
-			soc, monitor_vdev_id, helper->mac_addr, 1);
+			soc, helper->vdev_id, helper->mac_addr, 1);
 	fw_authorize_status = wma_set_peer_param(
 			wma, helper->mac_addr, WMI_HOST_PEER_AUTHORIZE, 1,
-			monitor_vdev_id);
+			helper->vdev_id);
 	if (trace)
-		pr_err("qca_inject: authorize vdev=%u peer=%u state=%d host=%d fw=%d\n",
-		       monitor_vdev_id, helper->peer_id, peer_state_status,
+		pr_err("qca_inject: helper authorize vdev=%u peer=%u state=%d host=%d fw=%d\n",
+		       helper->vdev_id, helper->peer_id, peer_state_status,
 		       peer_authorize_status, fw_authorize_status);
 
-	helper->dp_peer_attached = true;
+	up.vdev_id = helper->vdev_id;
+	status = wmi_unified_vdev_up_send(wma->wmi_handle,
+					  helper->mac_addr, &up);
+	if (QDF_IS_STATUS_ERROR(status))
+		goto fail;
 	helper->up = true;
+	msleep(50);
 
 	helper->created = true;
-	wma_info("Injection monitor datapath ready: vdev=%u peer=%u freq=%u mac=%pM",
-		 monitor_vdev_id, helper->peer_id, chanfreq,
-		 helper->mac_addr);
+	wma_info("Injection TX helper ready: monitor=%u helper=%u peer=%u freq=%u mac=%pM",
+		 monitor_vdev_id, helper->vdev_id, helper->peer_id,
+		 chanfreq, helper->mac_addr);
 	if (trace)
-		pr_err("qca_inject: monitor DP ready vdev=%u peer=%u freq=%u\n",
-		       monitor_vdev_id, helper->peer_id, chanfreq);
+		pr_err("qca_inject: helper DP ready monitor=%u helper=%u peer=%u freq=%u\n",
+		       monitor_vdev_id, helper->vdev_id, helper->peer_id,
+		       chanfreq);
 	return QDF_STATUS_SUCCESS;
 fail:
-	wma_injection_detach_dp(helper);
 	if (trace)
-		pr_err("qca_inject: monitor DP setup failed vdev=%u status=%d peer=%u\n",
-		       monitor_vdev_id, status, helper->peer_id);
-	qdf_mem_zero(helper, sizeof(*helper));
+		pr_err("qca_inject: helper setup failed monitor=%u helper=%u status=%d peer=%u\n",
+		       monitor_vdev_id, helper->vdev_id, status,
+		       helper->peer_id);
+	__wma_injection_destroy_helper(wma);
 	return status;
 }
 
