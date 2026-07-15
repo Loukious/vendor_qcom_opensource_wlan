@@ -215,6 +215,48 @@ wma_injection_detach_dp(struct wma_injection_helper *helper)
 	helper->dp_attached = false;
 }
 
+static QDF_STATUS
+wma_injection_peer_assoc(tp_wma_handle wma,
+			 struct wma_injection_helper *helper)
+{
+	static const uint8_t rates_11g[] = {
+		0x82, 0x84, 0x8b, 0x96, 0x0c, 0x12, 0x18, 0x24,
+	};
+	static const uint8_t rates_11a[] = {
+		0x0c, 0x12, 0x18, 0x24, 0x30, 0x48, 0x60, 0x6c,
+	};
+	struct peer_assoc_params assoc = {0};
+	const uint8_t *rates;
+	uint8_t rate_count;
+	enum wlan_phymode phymode;
+
+	if (helper->chanfreq < 4000) {
+		rates = rates_11g;
+		rate_count = ARRAY_SIZE(rates_11g);
+		phymode = WLAN_PHYMODE_11G;
+	} else {
+		rates = rates_11a;
+		rate_count = ARRAY_SIZE(rates_11a);
+		phymode = WLAN_PHYMODE_11A;
+	}
+
+	assoc.vdev_id = helper->vdev_id;
+	assoc.peer_new_assoc = 1;
+	assoc.peer_associd = 1;
+	assoc.peer_listen_intval = 1;
+	assoc.peer_max_mpdu = 8191;
+	assoc.peer_nss = 1;
+	assoc.peer_phymode = wmi_host_to_fw_phymode(phymode);
+	assoc.auth_flag = 1;
+	assoc.is_wme_set = 1;
+	assoc.peer_legacy_rates.num_rates = rate_count;
+	qdf_mem_copy(assoc.peer_legacy_rates.rates, rates, rate_count);
+	qdf_mem_copy(assoc.peer_mac, helper->peer_addr,
+		     QDF_MAC_ADDR_SIZE);
+
+	return wmi_unified_peer_assoc_send(wma->wmi_handle, &assoc);
+}
+
 static void wma_injection_unmap_free(tp_wma_handle wma, qdf_nbuf_t nbuf)
 {
 #ifndef CONFIG_HL_SUPPORT
@@ -393,6 +435,11 @@ __wma_injection_ensure_helper(tp_wma_handle wma, uint8_t monitor_vdev_id,
 	if (QDF_IS_STATUS_ERROR(status))
 		goto fail;
 
+	stage = "peer_assoc";
+	status = wma_injection_peer_assoc(wma, helper);
+	if (QDF_IS_STATUS_ERROR(status))
+		goto fail;
+
 	peer_state_status = cdp_peer_state_update(
 			soc, helper->peer_addr, OL_TXRX_PEER_STATE_AUTH);
 	peer_authorize_status = cdp_peer_authorize(
@@ -407,6 +454,7 @@ __wma_injection_ensure_helper(tp_wma_handle wma, uint8_t monitor_vdev_id,
 
 	stage = "vdev_up";
 	up.vdev_id = helper->vdev_id;
+	up.assoc_id = 1;
 	status = wmi_unified_vdev_up_send(wma->wmi_handle,
 					  helper->peer_addr, &up);
 	if (QDF_IS_STATUS_ERROR(status))
