@@ -107,6 +107,44 @@ module_param_named(injection_inflight_limit, wma_injection_inflight_limit,
 MODULE_PARM_DESC(injection_inflight_limit,
 		 "Maximum injected frames awaiting firmware completion");
 
+struct wma_injection_stats {
+	atomic_long_t enqueued;
+	atomic_long_t queue_dropped;
+	atomic_long_t submitted;
+	atomic_long_t send_failed;
+	atomic_long_t completed_ok;
+	atomic_long_t completed_failed;
+	atomic_long_t completion_unmatched;
+	atomic_long_t timed_out;
+};
+
+static struct wma_injection_stats wma_injection_stats;
+
+static int wma_injection_counter_get(char *buffer,
+				     const struct kernel_param *kp)
+{
+	return scnprintf(buffer, PAGE_SIZE, "%ld\n",
+			 atomic_long_read((atomic_long_t *)kp->arg));
+}
+
+static const struct kernel_param_ops wma_injection_counter_ops = {
+	.get = wma_injection_counter_get,
+};
+
+#define WMA_INJECTION_COUNTER_PARAM(_name, _member) \
+	module_param_cb(_name, &wma_injection_counter_ops, \
+			&wma_injection_stats._member, 0444)
+
+WMA_INJECTION_COUNTER_PARAM(injection_enqueued, enqueued);
+WMA_INJECTION_COUNTER_PARAM(injection_queue_dropped, queue_dropped);
+WMA_INJECTION_COUNTER_PARAM(injection_submitted, submitted);
+WMA_INJECTION_COUNTER_PARAM(injection_send_failed, send_failed);
+WMA_INJECTION_COUNTER_PARAM(injection_completed_ok, completed_ok);
+WMA_INJECTION_COUNTER_PARAM(injection_completed_failed, completed_failed);
+WMA_INJECTION_COUNTER_PARAM(injection_completion_unmatched,
+			    completion_unmatched);
+WMA_INJECTION_COUNTER_PARAM(injection_timed_out, timed_out);
+
 struct wma_injection_pending {
 	struct list_head node;
 	qdf_nbuf_t nbuf;
@@ -365,6 +403,8 @@ wma_injection_send(tp_wma_handle wma, qdf_nbuf_t nbuf,
 	if (trace)
 		pr_err("qca_inject: WMI mgmt send helper=%u desc=%u status=%d\n",
 		       params.vdev_id, desc_id, status);
+	if (QDF_IS_STATUS_SUCCESS(status))
+		atomic_long_inc(&wma_injection_stats.submitted);
 	if (QDF_IS_STATUS_ERROR(status)) {
 		spin_lock_bh(&wma_injection_ctx.lock);
 		if (slot->nbuf && slot->desc_id == desc_id) {
@@ -410,6 +450,7 @@ static void wma_injection_work(struct work_struct *work)
 			pr_err("qca_inject: worker vdev=%u status=%d\n",
 			       pending->monitor_vdev_id, status);
 		if (QDF_IS_STATUS_ERROR(status)) {
+			atomic_long_inc(&wma_injection_stats.send_failed);
 			wma_warn("Injection send failed: status=%d vdev=%u",
 				 status, pending->monitor_vdev_id);
 			qdf_nbuf_free(pending->nbuf);
@@ -438,6 +479,7 @@ static void wma_injection_reaper(struct work_struct *work)
 		qdf_mem_zero(slot, sizeof(*slot));
 		if (wma_injection_ctx.in_flight)
 			wma_injection_ctx.in_flight--;
+		atomic_long_inc(&wma_injection_stats.timed_out);
 		wake_worker = true;
 		spin_unlock_bh(&wma_injection_ctx.lock);
 		wma_injection_unmap_free(wma_injection_ctx.wma, nbuf);
@@ -456,8 +498,10 @@ QDF_STATUS wma_injection_tx(qdf_nbuf_t nbuf, uint8_t monitor_vdev_id)
 	if (!wma_injection_ctx.active)
 		return QDF_STATUS_E_AGAIN;
 	pending = kmalloc(sizeof(*pending), GFP_ATOMIC);
-	if (!pending)
+	if (!pending) {
+		atomic_long_inc(&wma_injection_stats.queue_dropped);
 		return QDF_STATUS_E_NOMEM;
+	}
 	pending->nbuf = nbuf;
 	pending->monitor_vdev_id = monitor_vdev_id;
 
@@ -465,10 +509,12 @@ QDF_STATUS wma_injection_tx(qdf_nbuf_t nbuf, uint8_t monitor_vdev_id)
 	if (wma_injection_ctx.pending_count >= WMA_INJECTION_QUEUE_LIMIT) {
 		spin_unlock_irqrestore(&wma_injection_ctx.lock, flags);
 		kfree(pending);
+		atomic_long_inc(&wma_injection_stats.queue_dropped);
 		return QDF_STATUS_E_BUSY;
 	}
 	list_add_tail(&pending->node, &wma_injection_ctx.pending);
 	wma_injection_ctx.pending_count++;
+	atomic_long_inc(&wma_injection_stats.enqueued);
 	spin_unlock_irqrestore(&wma_injection_ctx.lock, flags);
 	schedule_work(&wma_injection_ctx.work);
 	return QDF_STATUS_SUCCESS;
@@ -531,6 +577,7 @@ bool wma_injection_complete(void *wma_context, uint16_t desc_id,
 	spin_lock_bh(&wma_injection_ctx.lock);
 	if (!slot->nbuf || slot->desc_id != desc_id) {
 		spin_unlock_bh(&wma_injection_ctx.lock);
+		atomic_long_inc(&wma_injection_stats.completion_unmatched);
 		return true;
 	}
 	nbuf = slot->nbuf;
@@ -546,6 +593,10 @@ bool wma_injection_complete(void *wma_context, uint16_t desc_id,
 	if (trace && status != WMI_MGMT_TX_COMP_TYPE_COMPLETE_OK)
 		wma_warn("Injection completion failed: desc=%u status=%u",
 			 desc_id, status);
+	if (status == WMI_MGMT_TX_COMP_TYPE_COMPLETE_OK)
+		atomic_long_inc(&wma_injection_stats.completed_ok);
+	else
+		atomic_long_inc(&wma_injection_stats.completed_failed);
 	wma_injection_unmap_free(wma, nbuf);
 	if (wma_injection_ctx.active)
 		schedule_work(&wma_injection_ctx.work);
