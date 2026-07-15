@@ -124,6 +124,22 @@ void hdd_clean_up_interface(struct hdd_context *hdd_ctx,
 int wlan_hdd_del_virtual_intf(struct wiphy *wiphy, struct wireless_dev *wdev);
 int __wlan_hdd_del_virtual_intf(struct wiphy *wiphy, struct wireless_dev *wdev);
 
+#ifdef FEATURE_FRAME_INJECTION_SUPPORT
+QDF_STATUS hdd_monitor_restore_work_init(struct hdd_context *hdd_ctx);
+void hdd_monitor_restore_work_deinit(struct hdd_context *hdd_ctx);
+#else
+static inline QDF_STATUS
+hdd_monitor_restore_work_init(struct hdd_context *hdd_ctx)
+{
+	return QDF_STATUS_SUCCESS;
+}
+
+static inline void
+hdd_monitor_restore_work_deinit(struct hdd_context *hdd_ctx)
+{
+}
+#endif
+
 /**
  * wlan_hdd_cleanup_remain_on_channel_ctx - Cleanup ROC on VDEV
  * @link_info: pointer to link_info struct in adapter

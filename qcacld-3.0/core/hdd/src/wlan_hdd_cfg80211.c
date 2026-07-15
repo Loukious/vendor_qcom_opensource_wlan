@@ -31303,6 +31303,11 @@ static int __wlan_hdd_cfg80211_set_mon_ch(struct wiphy *wiphy,
 		return qdf_status_to_os_return(status);
 	}
 
+	status = wma_injection_prepare(adapter->deflink->vdev_id,
+				       chandef->chan->center_freq);
+	if (QDF_IS_STATUS_ERROR(status))
+		hdd_warn("failed to prepare monitor injection helper: %d", status);
+
 	hdd_exit();
 
 	return 0;
@@ -32715,6 +32720,54 @@ wlan_hdd_cfg80211_get_channel_sta(struct wiphy *wiphy,
 	return ret;
 }
 
+#ifdef FEATURE_MONITOR_MODE_SUPPORT
+static int
+wlan_hdd_cfg80211_get_channel_mon(struct wiphy *wiphy,
+				  struct cfg80211_chan_def *chandef,
+				  struct hdd_adapter *adapter)
+{
+	struct hdd_monitor_ctx *mon_ctx;
+	struct wlan_objmgr_vdev *vdev;
+	struct wlan_channel chan_info = {0};
+	struct wlan_channel *des_chan;
+
+	vdev = hdd_objmgr_get_vdev_by_user(adapter->deflink, WLAN_OSIF_ID);
+	if (vdev) {
+		des_chan = wlan_vdev_mlme_get_des_chan(vdev);
+		if (des_chan && des_chan->ch_freq)
+			qdf_mem_copy(&chan_info, des_chan, sizeof(chan_info));
+		hdd_objmgr_put_vdev_by_user(vdev, WLAN_OSIF_ID);
+	}
+
+	/* The monitor context is updated by set_monitor_channel first. */
+	if (!chan_info.ch_freq) {
+		mon_ctx = WLAN_HDD_GET_MONITOR_CTX_PTR(adapter->deflink);
+		chan_info.ch_freq = mon_ctx->freq;
+		chan_info.ch_cfreq1 = mon_ctx->freq;
+		chan_info.ch_width = mon_ctx->bandwidth;
+	}
+
+	if (!chan_info.ch_freq)
+		return -ENODATA;
+
+	chandef->chan = ieee80211_get_channel(wiphy, chan_info.ch_freq);
+	if (!chandef->chan)
+		return -EINVAL;
+
+	chandef->center_freq1 = chan_info.ch_cfreq1 ?: chan_info.ch_freq;
+	chandef->center_freq2 = 0;
+	wlan_hdd_update_chandef(chandef, chan_info.ch_width,
+				chan_info.ch_cfreq2, false);
+	wlan_hdd_set_chandef_for_11be(chandef, &chan_info);
+
+	hdd_debug("monitor freq:%d, ch_width:%d, c_freq1:%d, c_freq2:%d",
+		  chan_info.ch_freq, chandef->width, chandef->center_freq1,
+		  chandef->center_freq2);
+
+	return 0;
+}
+#endif
+
 static int __wlan_hdd_cfg80211_get_channel(struct wiphy *wiphy,
 					   struct wireless_dev *wdev,
 					   struct cfg80211_chan_def *chandef,
@@ -32748,6 +32801,11 @@ static int __wlan_hdd_cfg80211_get_channel(struct wiphy *wiphy,
 		ret = wlan_hdd_cfg80211_get_channel_sta(wiphy, chandef, hdd_ctx,
 							adapter, link_id);
 		break;
+#ifdef FEATURE_MONITOR_MODE_SUPPORT
+	case QDF_MONITOR_MODE:
+		ret = wlan_hdd_cfg80211_get_channel_mon(wiphy, chandef, adapter);
+		break;
+#endif
 	default:
 		return -EINVAL;
 	}

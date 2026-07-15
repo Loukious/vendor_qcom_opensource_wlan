@@ -2146,6 +2146,10 @@ enum wlan_state_ctrl_str_id {
  * @get_sta_user_notif: Get station notifier callback to handle port_id on
  *			userspace application close/abort
  * @usd_adapter: adapter on which USD frames to be forwarded to userspace
+ * @monitor_restore_work: work that reopens a station preserved for monitor use
+ * @monitor_restore_work_status: initialization state of monitor restore work
+ * @monitor_restore_iface: name of the preserved station interface
+ * @monitor_restore_pending: whether a preserved station needs reopening
  */
 struct hdd_context {
 	struct wlan_objmgr_psoc *psoc;
@@ -2449,6 +2453,12 @@ struct hdd_context {
 	struct notifier_block get_sta_user_notif;
 #ifdef FEATURE_WLAN_SUPPORT_USD
 	struct hdd_adapter *usd_adapter;
+#endif
+#ifdef FEATURE_FRAME_INJECTION_SUPPORT
+	qdf_work_t monitor_restore_work;
+	enum hdd_work_status monitor_restore_work_status;
+	char monitor_restore_iface[IFNAMSIZ];
+	bool monitor_restore_pending;
 #endif
 };
 
