@@ -454,6 +454,7 @@ wma_injection_send(tp_wma_handle wma, qdf_nbuf_t nbuf,
 	if (direct_dp) {
 		soc = cds_get_context(QDF_MODULE_ID_SOC);
 		qdf_nbuf_set_next(nbuf, NULL);
+		QDF_NBUF_CB_TX_PACKET_TO_FW(nbuf) = 0;
 		QDF_NBUF_CB_MGMT_TXRX_DESC_ID(nbuf) = desc_id;
 		tx_exc.peer_id = CDP_INVALID_PEER;
 		tx_exc.tid = CDP_INVALID_TID;

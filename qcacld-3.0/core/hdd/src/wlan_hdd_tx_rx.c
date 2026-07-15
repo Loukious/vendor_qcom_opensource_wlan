@@ -651,6 +651,17 @@ static void hdd_monitor_mode_tx_inject(struct hdd_adapter *adapter,
 	if (trace)
 		pr_err("qca_probe: inject frame valid len=%u\n", skb->len);
 
+	/*
+	 * Packet sockets leave their own data in skb->cb.  The DP exception
+	 * path interprets bytes in that area as QDF flags, including the
+	 * packet-to-firmware bit, so start monitor frames with a clean QDF CB.
+	 */
+	if (trace)
+		pr_err("qca_dpraw: cb reset desc=%u to_fw=%u\n",
+		       QDF_NBUF_CB_MGMT_TXRX_DESC_ID(skb),
+		       QDF_NBUF_CB_TX_PACKET_TO_FW(skb));
+	qdf_nbuf_reset_ctxt((qdf_nbuf_t)skb);
+
 	if (trace)
 		pr_err("qca_probe: inject WMA call vdev=%u\n",
 		       adapter->deflink->vdev_id);

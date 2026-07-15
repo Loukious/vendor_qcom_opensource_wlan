@@ -966,6 +966,19 @@ struct dp_tx_ext_desc_elem_s *dp_tx_prepare_ext_desc(struct dp_vdev *vdev,
 	hal_tx_ext_desc_sync(&cached_ext_desc[0],
 			msdu_ext_desc->vaddr);
 
+	if (msdu_info->frm_type == dp_tx_frm_raw &&
+	    msdu_info->is_tx_sniffer) {
+		static unsigned int raw_ext_trace_count;
+		uint32_t *dw = msdu_ext_desc->vaddr;
+
+		if (raw_ext_trace_count++ < 32)
+			pr_err("qca_dpraw: ext iova=%pad vaddr=%pK frags=%u total=%u dw0-7=%08x %08x %08x %08x %08x %08x %08x %08x\n",
+			       &msdu_ext_desc->paddr, msdu_ext_desc->vaddr,
+			       seg_info->frag_cnt, seg_info->total_len,
+			       dw[0], dw[1], dw[2], dw[3], dw[4], dw[5],
+			       dw[6], dw[7]);
+	}
+
 	return msdu_ext_desc;
 }
 
@@ -1583,6 +1596,16 @@ static qdf_nbuf_t dp_tx_prepare_raw(struct dp_vdev *vdev, qdf_nbuf_t nbuf,
 		seg_info->frags[i].len = qdf_nbuf_len(curr_nbuf);
 		seg_info->frags[i].vaddr = (void *) curr_nbuf;
 		total_len += qdf_nbuf_len(curr_nbuf);
+		if (msdu_info->is_tx_sniffer) {
+			static unsigned int raw_map_trace_count;
+
+			if (raw_map_trace_count++ < 32)
+				pr_err("qca_dpraw: map desc=%u vdev=%u frag=%d nbuf=%pK data=%pK iova=%pad len=%u\n",
+				       QDF_NBUF_CB_MGMT_TXRX_DESC_ID(curr_nbuf),
+				       vdev->vdev_id, i, curr_nbuf,
+				       qdf_nbuf_data(curr_nbuf), &paddr,
+				       qdf_nbuf_len(curr_nbuf));
+		}
 	}
 
 	seg_info->frag_cnt = i;
@@ -3407,6 +3430,28 @@ qdf_nbuf_t dp_tx_comp_free_buf(struct dp_soc *soc, struct dp_tx_desc_s *desc,
 
 			goto nbuf_free;
 		}
+
+		if (qdf_unlikely(desc->frm_type == dp_tx_frm_raw)) {
+			static unsigned int raw_unmap_trace_count;
+			qdf_dma_addr_t payload_iova = 0;
+			uint32_t payload_len = 0;
+
+			hal_tx_ext_desc_get_frag_info(desc->msdu_ext_desc->vaddr,
+						      0, &payload_iova,
+						      &payload_len);
+			if (raw_unmap_trace_count++ < 32)
+				pr_err("qca_dpraw: unmap desc=%u ext=%pad payload=%pad len=%u flags=%x\n",
+				       desc->id, &desc->dma_addr, &payload_iova,
+				       payload_len, desc->flags);
+
+			/*
+			 * desc->dma_addr is the coherent MSDU extension descriptor,
+			 * not the skb mapping.  Generic completion would unmap that
+			 * persistent descriptor IOVA and the next reuse faults in SMMU.
+			 */
+			dp_tx_raw_prepare_unset(soc, nbuf);
+			goto nbuf_free;
+		}
 	}
 	/* If it's ME frame, dont unmap the cloned nbuf's */
 	if ((desc->flags & DP_TX_DESC_FLAG_ME) && qdf_nbuf_is_cloned(nbuf))
@@ -3596,6 +3641,22 @@ qdf_nbuf_t dp_tx_send_msdu_multiple(struct dp_vdev *vdev, qdf_nbuf_t nbuf,
 					 &htt_tcl_metadata,
 					 vdev,
 					 msdu_info);
+		if (msdu_info->frm_type == dp_tx_frm_raw &&
+		    msdu_info->is_tx_sniffer) {
+			static unsigned int raw_submit_trace_count;
+			uint32_t *dw = tx_desc->msdu_ext_desc->vaddr;
+
+			if (raw_submit_trace_count++ < 32)
+				pr_err("qca_dpraw: submit desc=%u cb_desc=%u vdev=%u pool=%u ring=%u tid=%u flags=%x cb_to_fw=%u ext=%pad ext_len=%u payload_dw=%08x:%08x len_dw=%08x htt=%x\n",
+				       tx_desc->id,
+				       QDF_NBUF_CB_MGMT_TXRX_DESC_ID(nbuf),
+				       vdev->vdev_id, tx_q->desc_pool_id,
+				       tx_q->ring_id, msdu_info->tid,
+				       tx_desc->flags,
+				       QDF_NBUF_CB_TX_PACKET_TO_FW(nbuf),
+				       &tx_desc->dma_addr, tx_desc->length,
+				       dw[6], dw[7], dw[8], htt_tcl_metadata);
+		}
 		/*
 		 * Enqueue the Tx MSDU descriptor to HW for transmit
 		 */
@@ -6588,6 +6649,24 @@ void dp_tx_comp_process_tx_status(struct dp_soc *soc,
 	if (!nbuf) {
 		dp_info_rl("invalid tx descriptor. nbuf NULL");
 		goto out;
+	}
+
+	if (tx_desc->frm_type == dp_tx_frm_raw &&
+	    tx_desc->msdu_ext_desc) {
+		static unsigned int raw_comp_trace_count;
+		qdf_dma_addr_t payload_iova = 0;
+		uint32_t payload_len = 0;
+
+		hal_tx_ext_desc_get_frag_info(tx_desc->msdu_ext_desc->vaddr, 0,
+					      &payload_iova, &payload_len);
+		if (raw_comp_trace_count++ < 32)
+			pr_err("qca_dpraw: complete desc=%u cb_desc=%u status=%u release=%u src=%u flags=%x ext=%pad payload=%pad len=%u txcnt=%u peer=%u tid=%u\n",
+			       tx_desc->id,
+			       QDF_NBUF_CB_MGMT_TXRX_DESC_ID(nbuf), ts->status,
+			       ts->release_src, tx_desc->buffer_src,
+			       tx_desc->flags, &tx_desc->dma_addr,
+			       &payload_iova, payload_len, ts->transmit_cnt,
+			       ts->peer_id, ts->tid);
 	}
 
 #ifdef FEATURE_FRAME_INJECTION_SUPPORT
