@@ -86,10 +86,11 @@
 #include "wma_eht.h"
 
 #ifdef FEATURE_FRAME_INJECTION_SUPPORT
+#include <linux/atomic.h>
 #include <linux/jiffies.h>
-#include <linux/list.h>
 #include <linux/moduleparam.h>
 #include <linux/mutex.h>
+#include <linux/wait.h>
 #include <linux/workqueue.h>
 #include "wlan_reg_services_api.h"
 
@@ -118,12 +119,6 @@ module_param_named(injection_dp_inflight_limit,
 		   wma_injection_dp_inflight_limit, uint, 0644);
 MODULE_PARM_DESC(injection_dp_inflight_limit,
 		 "Maximum direct-DP frames awaiting completion (1-32)");
-
-struct wma_injection_pending {
-	struct list_head node;
-	qdf_nbuf_t nbuf;
-	uint8_t monitor_vdev_id;
-};
 
 struct wma_injection_slot {
 	qdf_nbuf_t nbuf;
@@ -154,14 +149,15 @@ static struct {
 	spinlock_t lock;
 	struct mutex helper_lock;
 	struct mutex lifecycle_lock;
-	struct list_head pending;
+	qdf_nbuf_queue_t pending;
 	struct work_struct work;
 	struct delayed_work reaper;
+	wait_queue_head_t refill_wait;
 	struct wma_injection_slot slots[WMA_INJECTION_SLOT_COUNT];
 	struct wma_injection_helper helper;
+	atomic_t refill_busy;
 	tp_wma_handle wma;
 	uint16_t next_desc;
-	uint16_t pending_count;
 	uint16_t in_flight;
 	bool active;
 	bool paused;
@@ -515,6 +511,14 @@ static bool wma_injection_wait_for_idle(void)
 	return false;
 }
 
+static bool wma_injection_wait_for_refill(void)
+{
+	return wait_event_timeout(wma_injection_ctx.refill_wait,
+				  !atomic_read_acquire(
+					  &wma_injection_ctx.refill_busy),
+				  2 * HZ) != 0;
+}
+
 static uint16_t wma_injection_next_desc(void)
 {
 	uint16_t desc = WMA_INJECTION_DESC_BASE |
@@ -537,7 +541,7 @@ static uint16_t wma_injection_inflight_limit(void)
 
 static QDF_STATUS
 wma_injection_send(tp_wma_handle wma, qdf_nbuf_t nbuf,
-		   uint8_t monitor_vdev_id)
+		   uint8_t monitor_vdev_id, bool allow_setup)
 {
 	static unsigned int trace_count;
 	bool trace = trace_count++ < 16;
@@ -574,6 +578,8 @@ wma_injection_send(tp_wma_handle wma, qdf_nbuf_t nbuf,
 
 	if (!wma_injection_get_helper_snapshot(monitor_vdev_id, chanfreq,
 					       &helper)) {
+		if (!allow_setup)
+			return QDF_STATUS_E_AGAIN;
 		mutex_lock(&wma_injection_ctx.helper_lock);
 		status = __wma_injection_ensure_helper(wma, monitor_vdev_id,
 						       chanfreq);
@@ -589,6 +595,8 @@ wma_injection_send(tp_wma_handle wma, qdf_nbuf_t nbuf,
 			return status;
 		}
 	}
+	if (!allow_setup && !helper.direct_dp)
+		return QDF_STATUS_E_AGAIN;
 
 	desc_id = wma_injection_next_desc();
 	slot = &wma_injection_ctx.slots[desc_id % WMA_INJECTION_SLOT_COUNT];
@@ -657,43 +665,83 @@ wma_injection_send(tp_wma_handle wma, qdf_nbuf_t nbuf,
 	return status;
 }
 
-static void wma_injection_work(struct work_struct *work)
+static void wma_injection_refill(bool allow_setup)
 {
 	static unsigned int trace_count;
 	static unsigned int failure_trace_count;
-	struct wma_injection_pending *pending;
+	qdf_nbuf_t nbuf;
+	uint8_t monitor_vdev_id;
 	unsigned long flags;
+	bool defer_to_worker = false;
+	bool kick_worker;
 	QDF_STATUS status;
+
+	if (atomic_cmpxchg_acquire(&wma_injection_ctx.refill_busy, 0, 1)) {
+		if (!allow_setup)
+			wma_injection_queue_work();
+		return;
+	}
 
 	while (true) {
 		spin_lock_irqsave(&wma_injection_ctx.lock, flags);
-		if (list_empty(&wma_injection_ctx.pending) ||
+		if (!wma_injection_ctx.active ||
+		    !qdf_nbuf_queue_len(&wma_injection_ctx.pending) ||
 		    wma_injection_ctx.paused ||
 		    wma_injection_ctx.in_flight >=
 					wma_injection_inflight_limit()) {
 			spin_unlock_irqrestore(&wma_injection_ctx.lock, flags);
 			break;
 		}
-		pending = list_first_entry(&wma_injection_ctx.pending,
-					   struct wma_injection_pending, node);
-		list_del(&pending->node);
-		wma_injection_ctx.pending_count--;
+		nbuf = qdf_nbuf_queue_remove(&wma_injection_ctx.pending);
 		spin_unlock_irqrestore(&wma_injection_ctx.lock, flags);
 
-		status = wma_injection_send(wma_injection_ctx.wma,
-					    pending->nbuf,
-					    pending->monitor_vdev_id);
+		monitor_vdev_id = qdf_nbuf_get_vdev_ctx(nbuf);
+		qdf_nbuf_set_vdev_ctx(nbuf, 0);
+		status = wma_injection_send(wma_injection_ctx.wma, nbuf,
+					    monitor_vdev_id, allow_setup);
 		if (trace_count++ < 16)
-			pr_err("qca_inject: worker vdev=%u status=%d\n",
-			       pending->monitor_vdev_id, status);
+			pr_err("qca_inject: %s refill vdev=%u status=%d\n",
+			       allow_setup ? "worker" : "completion",
+			       monitor_vdev_id, status);
 		if (QDF_IS_STATUS_ERROR(status)) {
+			if (!allow_setup && status == QDF_STATUS_E_AGAIN) {
+				qdf_nbuf_set_vdev_ctx(nbuf, monitor_vdev_id);
+				spin_lock_irqsave(&wma_injection_ctx.lock, flags);
+				if (wma_injection_ctx.active) {
+					qdf_nbuf_queue_insert_head(
+						&wma_injection_ctx.pending, nbuf);
+					nbuf = NULL;
+					defer_to_worker = true;
+				}
+				spin_unlock_irqrestore(&wma_injection_ctx.lock,
+						       flags);
+				if (nbuf)
+					qdf_nbuf_free(nbuf);
+				break;
+			}
 			if (failure_trace_count++ < 16)
 				wma_warn("Injection send failed: status=%d vdev=%u",
-					 status, pending->monitor_vdev_id);
-			qdf_nbuf_free(pending->nbuf);
+					 status, monitor_vdev_id);
+			qdf_nbuf_free(nbuf);
 		}
-		kfree(pending);
 	}
+
+	atomic_set_release(&wma_injection_ctx.refill_busy, 0);
+	wake_up_all(&wma_injection_ctx.refill_wait);
+	spin_lock_irqsave(&wma_injection_ctx.lock, flags);
+	kick_worker = wma_injection_ctx.active &&
+		      !wma_injection_ctx.paused &&
+		      qdf_nbuf_queue_len(&wma_injection_ctx.pending) &&
+		      wma_injection_ctx.in_flight <
+					wma_injection_inflight_limit();
+	spin_unlock_irqrestore(&wma_injection_ctx.lock, flags);
+	if (defer_to_worker || kick_worker)
+		wma_injection_queue_work();
+}
+
+static void wma_injection_work(struct work_struct *work)
+{
+	wma_injection_refill(true);
 }
 
 static void wma_injection_reaper(struct work_struct *work)
@@ -741,27 +789,27 @@ static void wma_injection_reaper(struct work_struct *work)
 
 QDF_STATUS wma_injection_tx(qdf_nbuf_t nbuf, uint8_t monitor_vdev_id)
 {
-	struct wma_injection_pending *pending;
 	unsigned long flags;
-
-	if (!wma_injection_ctx.active)
-		return QDF_STATUS_E_AGAIN;
-	pending = kmalloc(sizeof(*pending), GFP_ATOMIC);
-	if (!pending)
-		return QDF_STATUS_E_NOMEM;
-	pending->nbuf = nbuf;
-	pending->monitor_vdev_id = monitor_vdev_id;
+	bool kick_worker;
 
 	spin_lock_irqsave(&wma_injection_ctx.lock, flags);
-	if (wma_injection_ctx.pending_count >= WMA_INJECTION_QUEUE_LIMIT) {
+	if (!wma_injection_ctx.active) {
 		spin_unlock_irqrestore(&wma_injection_ctx.lock, flags);
-		kfree(pending);
+		return QDF_STATUS_E_AGAIN;
+	}
+	if (qdf_nbuf_queue_len(&wma_injection_ctx.pending) >=
+	    WMA_INJECTION_QUEUE_LIMIT) {
+		spin_unlock_irqrestore(&wma_injection_ctx.lock, flags);
 		return QDF_STATUS_E_BUSY;
 	}
-	list_add_tail(&pending->node, &wma_injection_ctx.pending);
-	wma_injection_ctx.pending_count++;
+	qdf_nbuf_set_vdev_ctx(nbuf, monitor_vdev_id);
+	qdf_nbuf_queue_add(&wma_injection_ctx.pending, nbuf);
+	kick_worker = !wma_injection_ctx.paused &&
+		      wma_injection_ctx.in_flight <
+					wma_injection_inflight_limit();
 	spin_unlock_irqrestore(&wma_injection_ctx.lock, flags);
-	wma_injection_queue_work();
+	if (kick_worker)
+		wma_injection_queue_work();
 	return QDF_STATUS_SUCCESS;
 }
 
@@ -783,11 +831,15 @@ QDF_STATUS wma_injection_prepare(uint8_t monitor_vdev_id, uint32_t chanfreq)
 	spin_unlock_irqrestore(&wma_injection_ctx.lock, flags);
 	flush_work(&wma_injection_ctx.work);
 
-	mutex_lock(&wma_injection_ctx.helper_lock);
-	if (wma_injection_wait_for_idle())
-		status = __wma_injection_ensure_helper(wma, monitor_vdev_id,
-						       chanfreq);
-	mutex_unlock(&wma_injection_ctx.helper_lock);
+	if (!wma_injection_wait_for_refill()) {
+		wma_warn("Timed out draining injection refill for channel change");
+	} else {
+		mutex_lock(&wma_injection_ctx.helper_lock);
+		if (wma_injection_wait_for_idle())
+			status = __wma_injection_ensure_helper(
+					wma, monitor_vdev_id, chanfreq);
+		mutex_unlock(&wma_injection_ctx.helper_lock);
+	}
 
 	spin_lock_irqsave(&wma_injection_ctx.lock, flags);
 	wma_injection_ctx.paused = false;
@@ -807,7 +859,7 @@ bool wma_injection_complete(void *wma_context, uint16_t desc_id,
 	struct wma_injection_slot *slot;
 	qdf_nbuf_t nbuf;
 	uint16_t in_flight;
-	uint16_t pending_count;
+	uint32_t pending_count;
 
 	if ((desc_id & ~WMA_INJECTION_DESC_MASK) != WMA_INJECTION_DESC_BASE)
 		return false;
@@ -822,7 +874,7 @@ bool wma_injection_complete(void *wma_context, uint16_t desc_id,
 	if (wma_injection_ctx.in_flight)
 		wma_injection_ctx.in_flight--;
 	in_flight = wma_injection_ctx.in_flight;
-	pending_count = wma_injection_ctx.pending_count;
+	pending_count = qdf_nbuf_queue_len(&wma_injection_ctx.pending);
 	spin_unlock_bh(&wma_injection_ctx.lock);
 	if (trace)
 		pr_err("qca_inject: completion desc=%u status=%u inflight=%u pending=%u\n",
@@ -842,10 +894,11 @@ bool wma_injection_dp_complete(void *wma_context, qdf_nbuf_t nbuf,
 	static unsigned int trace_count;
 	uint16_t desc_id = QDF_NBUF_CB_MGMT_TXRX_DESC_ID(nbuf);
 	struct wma_injection_slot *slot;
-	bool wake_worker = false;
+	bool refill = false;
 
 	if ((desc_id & ~WMA_INJECTION_DESC_MASK) != WMA_INJECTION_DESC_BASE)
 		return false;
+	QDF_NBUF_CB_MGMT_TXRX_DESC_ID(nbuf) = 0;
 
 	slot = &wma_injection_ctx.slots[desc_id % WMA_INJECTION_SLOT_COUNT];
 	spin_lock_bh(&wma_injection_ctx.lock);
@@ -853,18 +906,17 @@ bool wma_injection_dp_complete(void *wma_context, qdf_nbuf_t nbuf,
 		qdf_mem_zero(slot, sizeof(*slot));
 		if (wma_injection_ctx.in_flight)
 			wma_injection_ctx.in_flight--;
-		QDF_NBUF_CB_MGMT_TXRX_DESC_ID(nbuf) = 0;
-		wake_worker = true;
+		refill = true;
 	}
 	spin_unlock_bh(&wma_injection_ctx.lock);
 
-	if (trace_count++ < 16 && wake_worker)
+	if (trace_count++ < 16 && refill)
 		pr_err("qca_inject: direct DP completion desc=%u status=%d matched=%u\n",
-		       desc_id, status, wake_worker);
-	if (wake_worker && wma_injection_ctx.active)
-		wma_injection_queue_work();
+		       desc_id, status, refill);
+	if (refill && wma_injection_ctx.active)
+		wma_injection_refill(false);
 
-	return wake_worker;
+	return refill;
 }
 
 void wma_injection_pre_stop_cleanup(void)
@@ -878,11 +930,15 @@ void wma_injection_pre_stop_cleanup(void)
 	wma_injection_ctx.paused = true;
 	spin_unlock_irqrestore(&wma_injection_ctx.lock, flags);
 	flush_work(&wma_injection_ctx.work);
-	mutex_lock(&wma_injection_ctx.helper_lock);
-	if (!wma_injection_wait_for_idle())
-		wma_warn("Timed out draining injection before WLAN stop");
-	__wma_injection_destroy_helper(wma_injection_ctx.wma);
-	mutex_unlock(&wma_injection_ctx.helper_lock);
+	if (!wma_injection_wait_for_refill()) {
+		wma_warn("Timed out draining injection refill before WLAN stop");
+	} else {
+		mutex_lock(&wma_injection_ctx.helper_lock);
+		if (!wma_injection_wait_for_idle())
+			wma_warn("Timed out draining injection before WLAN stop");
+		__wma_injection_destroy_helper(wma_injection_ctx.wma);
+		mutex_unlock(&wma_injection_ctx.helper_lock);
+	}
 	mutex_unlock(&wma_injection_ctx.lifecycle_lock);
 }
 
@@ -892,7 +948,9 @@ static void wma_injection_init(tp_wma_handle wma)
 	spin_lock_init(&wma_injection_ctx.lock);
 	mutex_init(&wma_injection_ctx.helper_lock);
 	mutex_init(&wma_injection_ctx.lifecycle_lock);
-	INIT_LIST_HEAD(&wma_injection_ctx.pending);
+	qdf_nbuf_queue_init(&wma_injection_ctx.pending);
+	atomic_set(&wma_injection_ctx.refill_busy, 0);
+	init_waitqueue_head(&wma_injection_ctx.refill_wait);
 	INIT_WORK(&wma_injection_ctx.work, wma_injection_work);
 	INIT_DELAYED_WORK(&wma_injection_ctx.reaper, wma_injection_reaper);
 	wma_injection_ctx.wma = wma;
@@ -905,25 +963,31 @@ static void wma_injection_init(tp_wma_handle wma)
 
 static void wma_injection_deinit(tp_wma_handle wma)
 {
-	struct wma_injection_pending *pending, *tmp;
+	unsigned long flags;
 	qdf_nbuf_t nbuf;
 	int i;
 
+	spin_lock_irqsave(&wma_injection_ctx.lock, flags);
 	wma_injection_ctx.active = false;
+	wma_injection_ctx.paused = true;
+	spin_unlock_irqrestore(&wma_injection_ctx.lock, flags);
 	cancel_delayed_work_sync(&wma_injection_ctx.reaper);
 	cancel_work_sync(&wma_injection_ctx.work);
 	mutex_lock(&wma_injection_ctx.lifecycle_lock);
+	if (!wma_injection_wait_for_refill()) {
+		wma_warn("Timed out draining injection refill during WMA deinit");
+		wait_event(wma_injection_ctx.refill_wait,
+			   !atomic_read_acquire(
+				   &wma_injection_ctx.refill_busy));
+	}
 	mutex_lock(&wma_injection_ctx.helper_lock);
 	if (!wma_injection_wait_for_idle())
 		wma_warn("Timed out draining injection during WMA deinit");
 	__wma_injection_destroy_helper(wma);
 	mutex_unlock(&wma_injection_ctx.helper_lock);
 	mutex_unlock(&wma_injection_ctx.lifecycle_lock);
-	list_for_each_entry_safe(pending, tmp, &wma_injection_ctx.pending, node) {
-		list_del(&pending->node);
-		qdf_nbuf_free(pending->nbuf);
-		kfree(pending);
-	}
+	while ((nbuf = qdf_nbuf_queue_remove(&wma_injection_ctx.pending)))
+		qdf_nbuf_free(nbuf);
 	for (i = 0; i < WMA_INJECTION_SLOT_COUNT; i++) {
 		bool direct_dp;
 
