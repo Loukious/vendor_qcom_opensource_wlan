@@ -107,9 +107,17 @@ MODULE_PARM_DESC(injection_dp_variant,
 #define WMA_INJECTION_DESC_MASK 0x0fff
 #define WMA_INJECTION_SLOT_COUNT 256
 #define WMA_INJECTION_INFLIGHT_LIMIT 1
-#define WMA_INJECTION_DP_INFLIGHT_LIMIT 1
+#define WMA_INJECTION_DP_INFLIGHT_DEFAULT 1
+#define WMA_INJECTION_DP_INFLIGHT_MAX 32
 #define WMA_INJECTION_QUEUE_LIMIT 256
 #define WMA_INJECTION_TIMEOUT (2 * HZ)
+
+static unsigned int wma_injection_dp_inflight_limit =
+	WMA_INJECTION_DP_INFLIGHT_DEFAULT;
+module_param_named(injection_dp_inflight_limit,
+		   wma_injection_dp_inflight_limit, uint, 0644);
+MODULE_PARM_DESC(injection_dp_inflight_limit,
+		 "Maximum direct-DP frames awaiting completion (1-32)");
 
 struct wma_injection_pending {
 	struct list_head node;
@@ -483,8 +491,12 @@ static uint16_t wma_injection_next_desc(void)
 
 static uint16_t wma_injection_inflight_limit(void)
 {
-	return READ_ONCE(wma_injection_ctx.helper.created) ?
-		WMA_INJECTION_DP_INFLIGHT_LIMIT : WMA_INJECTION_INFLIGHT_LIMIT;
+	if (!READ_ONCE(wma_injection_ctx.helper.created))
+		return WMA_INJECTION_INFLIGHT_LIMIT;
+
+	return clamp_t(unsigned int,
+		       READ_ONCE(wma_injection_dp_inflight_limit), 1,
+		       WMA_INJECTION_DP_INFLIGHT_MAX);
 }
 
 static QDF_STATUS
@@ -839,8 +851,9 @@ static void wma_injection_init(tp_wma_handle wma)
 	INIT_DELAYED_WORK(&wma_injection_ctx.reaper, wma_injection_reaper);
 	wma_injection_ctx.wma = wma;
 	wma_injection_ctx.active = true;
-	pr_err("qca_inject: WMA queue initialized max_vdev=%u inflight=%u\n",
-	       wma->max_bssid, WMA_INJECTION_INFLIGHT_LIMIT);
+	pr_err("qca_inject: WMA queue initialized max_vdev=%u wmi_inflight=%u dp_inflight=%u\n",
+	       wma->max_bssid, WMA_INJECTION_INFLIGHT_LIMIT,
+	       wma_injection_inflight_limit());
 	schedule_delayed_work(&wma_injection_ctx.reaper, HZ);
 }
 
