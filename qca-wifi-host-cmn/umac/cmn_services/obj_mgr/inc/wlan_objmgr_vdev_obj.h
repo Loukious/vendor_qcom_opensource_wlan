@@ -281,6 +281,9 @@
 /* Invalid VDEV link id*/
 #define WLAN_INVALID_LINK_ID 255
 
+/* Internal vdev with no policy-manager connection or OS-facing interface. */
+#define WLAN_VDEV_CREATE_INTERNAL_HELPER 0x80000000U
+
 /**
  * struct wlan_vdev_create_params - Create params, HDD/OSIF passes this
  *				    structure While creating VDEV

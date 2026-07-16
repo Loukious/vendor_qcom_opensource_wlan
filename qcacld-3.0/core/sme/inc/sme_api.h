@@ -2239,6 +2239,26 @@ QDF_STATUS sme_create_mon_session(mac_handle_t mac_handle, uint8_t *bssid,
  */
 QDF_STATUS sme_delete_mon_session(mac_handle_t mac_handle, uint8_t vdev_id);
 
+#ifdef FEATURE_FRAME_INJECTION_SUPPORT
+QDF_STATUS
+sme_injection_helper_sync(mac_handle_t mac_handle,
+			  struct wlan_objmgr_vdev *monitor_vdev,
+			  const struct channel_change_req *monitor_req);
+void sme_injection_helper_destroy(mac_handle_t mac_handle);
+#else
+static inline QDF_STATUS
+sme_injection_helper_sync(mac_handle_t mac_handle,
+			  struct wlan_objmgr_vdev *monitor_vdev,
+			  const struct channel_change_req *monitor_req)
+{
+	return QDF_STATUS_SUCCESS;
+}
+
+static inline void sme_injection_helper_destroy(mac_handle_t mac_handle)
+{
+}
+#endif
+
 /**
  * sme_set_vdev_ies_per_band() - sends the per band IEs to vdev
  * @mac_handle: Opaque handle to the global MAC context

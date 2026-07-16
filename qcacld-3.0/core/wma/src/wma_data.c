@@ -122,6 +122,7 @@ struct wma_injection_slot {
 
 struct wma_injection_helper {
 	bool created;
+	bool objmgr_managed;
 	bool wmi_created;
 	bool wmi_started;
 	bool wmi_up;
@@ -270,8 +271,18 @@ static void __wma_injection_destroy_helper(tp_wma_handle wma)
 	struct peer_delete_cmd_params peer_delete = {0};
 	struct vdev_stop_params vdev_stop = {0};
 	struct wma_injection_helper *helper = &wma_injection_ctx.helper;
+	ol_txrx_soc_handle soc = cds_get_context(QDF_MODULE_ID_SOC);
 
 	smp_store_release(&helper->created, false);
+	if (helper->objmgr_managed) {
+		if (helper->flow_pool_mapped && soc)
+			cdp_flow_pool_unmap(soc, OL_TXRX_PDEV_ID,
+					    helper->vdev_id);
+		wma_info("Injection object-manager helper detached: monitor=%u helper=%u",
+			 helper->monitor_vdev_id, helper->vdev_id);
+		qdf_mem_zero(helper, sizeof(*helper));
+		return;
+	}
 	if (!wma || !wma->wmi_handle)
 		return;
 
@@ -512,6 +523,162 @@ fail:
 		helper->peer_id);
 	__wma_injection_destroy_helper(wma);
 	return status;
+}
+
+QDF_STATUS
+wma_injection_objmgr_helper_attach(struct wlan_objmgr_vdev *vdev,
+				   uint8_t monitor_vdev_id,
+				   uint32_t chanfreq)
+{
+	struct wma_injection_helper *helper = &wma_injection_ctx.helper;
+	struct vdev_set_params encap = {0};
+	cdp_config_param_type val = {0};
+	tp_wma_handle wma = wma_injection_ctx.wma;
+	ol_txrx_soc_handle soc = cds_get_context(QDF_MODULE_ID_SOC);
+	uint8_t *mac_addr;
+	uint8_t vdev_id;
+	uint16_t peer_id;
+	int retries;
+	QDF_STATUS status;
+	QDF_STATUS map_status;
+	QDF_STATUS peer_state_status;
+	QDF_STATUS peer_authorize_status;
+	QDF_STATUS fw_authorize_status;
+
+	if (!vdev || !wma || !wma->wmi_handle || !soc)
+		return QDF_STATUS_E_INVAL;
+
+	vdev_id = wlan_vdev_get_id(vdev);
+	mac_addr = wlan_vdev_mlme_get_macaddr(vdev);
+	if (!mac_addr ||
+	    !(vdev->vdev_objmgr.c_flags & WLAN_VDEV_CREATE_INTERNAL_HELPER) ||
+	    vdev_id >= wma->max_bssid ||
+	    wma->interfaces[vdev_id].vdev != vdev)
+		return QDF_STATUS_E_INVAL;
+
+	mutex_lock(&wma_injection_ctx.helper_lock);
+	if (helper->objmgr_managed && helper->vdev_id == vdev_id) {
+		mutex_unlock(&wma_injection_ctx.helper_lock);
+		return QDF_STATUS_SUCCESS;
+	}
+	if (helper->created || helper->wmi_created || helper->dp_attached)
+		__wma_injection_destroy_helper(wma);
+
+	helper->objmgr_managed = true;
+	helper->wmi_created = true;
+	helper->dp_attached = true;
+	helper->vdev_id = vdev_id;
+	helper->monitor_vdev_id = monitor_vdev_id;
+	helper->chanfreq = chanfreq;
+	helper->peer_id = CDP_INVALID_PEER;
+	qdf_mem_copy(helper->mac_addr, mac_addr, QDF_MAC_ADDR_SIZE);
+	qdf_mem_copy(helper->peer_addr, mac_addr, QDF_MAC_ADDR_SIZE);
+
+	map_status = cdp_flow_pool_map(soc, OL_TXRX_PDEV_ID, vdev_id);
+	if (QDF_IS_STATUS_SUCCESS(map_status))
+		helper->flow_pool_mapped = true;
+	else if (map_status != QDF_STATUS_E_INVAL) {
+		status = map_status;
+		goto fail;
+	}
+
+	val.cdp_vdev_param_tx_encap = htt_cmn_pkt_type_raw;
+	status = cdp_txrx_set_vdev_param(soc, vdev_id,
+					   CDP_TX_ENCAP_TYPE, val);
+	if (QDF_IS_STATUS_ERROR(status))
+		goto fail;
+
+	encap.vdev_id = vdev_id;
+	encap.param_id = wmi_vdev_param_tx_encap_type;
+	encap.param_value = htt_cmn_pkt_type_raw;
+	status = wmi_unified_vdev_set_param_send(wma->wmi_handle, &encap);
+	if (QDF_IS_STATUS_ERROR(status))
+		goto fail;
+
+	for (retries = 0; retries < 40; retries++) {
+		helper->peer_id = cdp_get_peer_id(soc, vdev_id,
+						 helper->peer_addr);
+		if (helper->peer_id != CDP_INVALID_PEER)
+			break;
+		msleep(10);
+	}
+	if (helper->peer_id == CDP_INVALID_PEER) {
+		status = QDF_STATUS_E_AGAIN;
+		goto fail;
+	}
+
+	/* The normal monitor self peer is the helper's injection peer. */
+	helper->dp_peer_attached = true;
+	peer_state_status = cdp_peer_state_update(
+			soc, helper->peer_addr, OL_TXRX_PEER_STATE_AUTH);
+	peer_authorize_status = cdp_peer_authorize(
+			soc, vdev_id, helper->peer_addr, 1);
+	fw_authorize_status = wma_set_peer_param(
+			wma, helper->peer_addr, WMI_HOST_PEER_AUTHORIZE, 1,
+			vdev_id);
+	if (QDF_IS_STATUS_ERROR(peer_state_status) ||
+	    QDF_IS_STATUS_ERROR(peer_authorize_status) ||
+	    QDF_IS_STATUS_ERROR(fw_authorize_status))
+		wma_warn("Object-manager injection peer authorization incomplete: state=%d host=%d fw=%d",
+			 peer_state_status, peer_authorize_status,
+			 fw_authorize_status);
+	peer_id = helper->peer_id;
+	mutex_unlock(&wma_injection_ctx.helper_lock);
+
+	wma_info("Injection object-manager helper configured: monitor=%u helper=%u peer=%u",
+		 monitor_vdev_id, vdev_id, peer_id);
+	return QDF_STATUS_SUCCESS;
+
+fail:
+	__wma_injection_destroy_helper(wma);
+	mutex_unlock(&wma_injection_ctx.helper_lock);
+	return status;
+}
+
+QDF_STATUS
+wma_injection_objmgr_helper_activate(struct wlan_objmgr_vdev *vdev,
+				     uint32_t chanfreq)
+{
+	struct wma_injection_helper *helper = &wma_injection_ctx.helper;
+	ol_txrx_soc_handle soc = cds_get_context(QDF_MODULE_ID_SOC);
+	QDF_STATUS status;
+
+	if (!vdev || !soc)
+		return QDF_STATUS_E_INVAL;
+
+	mutex_lock(&wma_injection_ctx.helper_lock);
+	if (!helper->objmgr_managed ||
+	    helper->vdev_id != wlan_vdev_get_id(vdev)) {
+		status = QDF_STATUS_E_INVAL;
+		goto out;
+	}
+
+	status = cdp_refresh_monitor_mode(soc, OL_TXRX_PDEV_ID,
+					  helper->monitor_vdev_id);
+	if (QDF_IS_STATUS_ERROR(status))
+		goto out;
+
+	helper->chanfreq = chanfreq;
+	helper->wmi_started = true;
+	helper->wmi_up = true;
+	smp_store_release(&helper->created, true);
+out:
+	mutex_unlock(&wma_injection_ctx.helper_lock);
+	return status;
+}
+
+void wma_injection_objmgr_helper_detach(struct wlan_objmgr_vdev *vdev)
+{
+	struct wma_injection_helper *helper = &wma_injection_ctx.helper;
+
+	if (!vdev)
+		return;
+
+	mutex_lock(&wma_injection_ctx.helper_lock);
+	if (helper->objmgr_managed &&
+	    helper->vdev_id == wlan_vdev_get_id(vdev))
+		__wma_injection_destroy_helper(wma_injection_ctx.wma);
+	mutex_unlock(&wma_injection_ctx.helper_lock);
 }
 
 static bool wma_injection_wait_for_idle(void)
@@ -843,7 +1010,8 @@ wma_injection_channel_change_begin(uint8_t monitor_vdev_id,
 			status = QDF_STATUS_E_BUSY;
 		} else if (smp_load_acquire(&helper->created) &&
 			   (helper->monitor_vdev_id != monitor_vdev_id ||
-			    helper->chanfreq != chanfreq)) {
+			    helper->chanfreq != chanfreq) &&
+			   !helper->objmgr_managed) {
 			__wma_injection_destroy_helper(wma);
 		}
 		mutex_unlock(&wma_injection_ctx.helper_lock);

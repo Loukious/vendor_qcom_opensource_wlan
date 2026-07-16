@@ -184,6 +184,9 @@ static QDF_STATUS vdev_mgr_create_param_update(
 	param->nss_2g = mlme_obj->proto.generic.nss_2g;
 	param->nss_5g = mlme_obj->proto.generic.nss_5g;
 	param->type = mlme_obj->mgmt.generic.type;
+	/* Keep monitor MLME semantics while creating a TX-capable target vdev. */
+	if (vdev->vdev_objmgr.c_flags & WLAN_VDEV_CREATE_INTERNAL_HELPER)
+		param->type = WLAN_VDEV_MLME_TYPE_AP;
 	param->subtype = mlme_obj->mgmt.generic.subtype;
 	param->mbssid_flags = mbss->mbssid_flags;
 	param->vdevid_trans = mbss->vdevid_trans;
@@ -644,6 +647,9 @@ void vdev_mgr_get_target_tsf(struct vdev_start_params *param,
 static void vdev_update_dfs_master_state(struct wlan_objmgr_vdev *vdev)
 {
 	enum QDF_OPMODE op_mode;
+
+	if (vdev->vdev_objmgr.c_flags & WLAN_VDEV_CREATE_INTERNAL_HELPER)
+		return;
 
 	op_mode = wlan_vdev_mlme_get_opmode(vdev);
 	if (op_mode == QDF_SAP_MODE || op_mode == QDF_P2P_GO_MODE)

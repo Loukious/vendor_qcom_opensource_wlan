@@ -51,6 +51,14 @@ bool wma_injection_complete(void *wma_handle, uint16_t desc_id,
 			    uint32_t status);
 bool wma_injection_dp_complete(void *wma_handle, qdf_nbuf_t nbuf,
 			       int32_t status);
+QDF_STATUS
+wma_injection_objmgr_helper_attach(struct wlan_objmgr_vdev *vdev,
+				   uint8_t monitor_vdev_id,
+				   uint32_t chanfreq);
+QDF_STATUS
+wma_injection_objmgr_helper_activate(struct wlan_objmgr_vdev *vdev,
+				     uint32_t chanfreq);
+void wma_injection_objmgr_helper_detach(struct wlan_objmgr_vdev *vdev);
 void wma_injection_pre_stop_cleanup(void);
 #else
 static inline QDF_STATUS
@@ -81,6 +89,26 @@ static inline bool
 wma_injection_dp_complete(void *wma_handle, qdf_nbuf_t nbuf, int32_t status)
 {
 	return false;
+}
+
+static inline QDF_STATUS
+wma_injection_objmgr_helper_attach(struct wlan_objmgr_vdev *vdev,
+				   uint8_t monitor_vdev_id,
+				   uint32_t chanfreq)
+{
+	return QDF_STATUS_E_NOSUPPORT;
+}
+
+static inline QDF_STATUS
+wma_injection_objmgr_helper_activate(struct wlan_objmgr_vdev *vdev,
+				     uint32_t chanfreq)
+{
+	return QDF_STATUS_E_NOSUPPORT;
+}
+
+static inline void
+wma_injection_objmgr_helper_detach(struct wlan_objmgr_vdev *vdev)
+{
 }
 
 static inline void wma_injection_pre_stop_cleanup(void)

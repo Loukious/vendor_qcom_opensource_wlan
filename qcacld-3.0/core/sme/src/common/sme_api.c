@@ -91,6 +91,15 @@
 #include "wlan_vdev_mlme_main.h"
 #include "wlan_tdls_api.h"
 
+#ifdef FEATURE_FRAME_INJECTION_SUPPORT
+#include <linux/bitmap.h>
+#include <linux/completion.h>
+#include <linux/jiffies.h>
+#include <linux/mutex.h>
+#include <wlan_osif_priv.h>
+#include "wma_api.h"
+#endif
+
 static QDF_STATUS init_sme_cmd_list(struct mac_context *mac);
 
 static void sme_disconnect_connected_sessions(struct mac_context *mac,
@@ -109,6 +118,54 @@ static QDF_STATUS sme_stats_ext_event(struct mac_context *mac,
 				      struct stats_ext_event *msg);
 
 static QDF_STATUS sme_fw_state_resp(struct mac_context *mac);
+
+#ifdef FEATURE_FRAME_INJECTION_SUPPORT
+static DEFINE_MUTEX(sme_injection_helper_lock);
+static DECLARE_COMPLETION(sme_injection_helper_vdev_event);
+static DECLARE_COMPLETION(sme_injection_helper_delete_event);
+static DECLARE_BITMAP(sme_injection_orphan_deletes, 256);
+
+static struct {
+	struct wlan_objmgr_vdev *vdev;
+	struct channel_change_req channel_req;
+	uint8_t vdev_id;
+	uint8_t monitor_vdev_id;
+	uint32_t chanfreq;
+	bool active;
+	bool deleting;
+	bool session_created;
+	bool event_is_up;
+} sme_injection_helper;
+
+static bool
+sme_injection_helper_complete_vdev_event(uint8_t vdev_id, bool is_up)
+{
+	if (!READ_ONCE(sme_injection_helper.active) ||
+	    READ_ONCE(sme_injection_helper.vdev_id) != vdev_id)
+		return false;
+
+	WRITE_ONCE(sme_injection_helper.event_is_up, is_up);
+	complete(&sme_injection_helper_vdev_event);
+	return true;
+}
+
+static bool sme_injection_helper_complete_delete(uint8_t vdev_id)
+{
+	if (READ_ONCE(sme_injection_helper.active) &&
+	    READ_ONCE(sme_injection_helper.vdev_id) == vdev_id) {
+		clear_bit(vdev_id, sme_injection_orphan_deletes);
+		complete(&sme_injection_helper_delete_event);
+		return true;
+	}
+
+	if (!test_and_clear_bit(vdev_id, sme_injection_orphan_deletes))
+		return false;
+
+	sme_warn("Consumed late injection helper delete response: vdev=%u",
+		 vdev_id);
+	return true;
+}
+#endif
 
 /* Internal SME APIs */
 QDF_STATUS sme_acquire_global_lock(struct sme_context *sme)
@@ -5189,6 +5246,11 @@ void sme_vdev_del_resp(uint8_t vdev_id)
 
 	mac = MAC_CONTEXT(mac_handle);
 	csr_cleanup_vdev_session(mac, vdev_id);
+
+#ifdef FEATURE_FRAME_INJECTION_SUPPORT
+	if (sme_injection_helper_complete_delete(vdev_id))
+		return;
+#endif
 
 	if (mac->session_close_cb)
 		mac->session_close_cb(vdev_id);
@@ -12964,6 +13026,284 @@ QDF_STATUS sme_delete_mon_session(mac_handle_t mac_handle, uint8_t vdev_id)
 	return status;
 }
 
+#ifdef FEATURE_FRAME_INJECTION_SUPPORT
+static QDF_STATUS sme_injection_helper_wait_vdev_event(bool is_up)
+{
+	unsigned long timeout;
+
+	timeout = wait_for_completion_timeout(
+			&sme_injection_helper_vdev_event,
+			msecs_to_jiffies(SME_CMD_VDEV_START_BSS_TIMEOUT));
+	if (!timeout)
+		return QDF_STATUS_E_TIMEOUT;
+	if (READ_ONCE(sme_injection_helper.event_is_up) != is_up)
+		return QDF_STATUS_E_FAILURE;
+
+	return QDF_STATUS_SUCCESS;
+}
+
+static void
+sme_injection_helper_copy_channel(struct wlan_objmgr_vdev *helper_vdev,
+				  struct wlan_objmgr_vdev *monitor_vdev)
+{
+	struct wlan_channel *helper_chan;
+	struct wlan_channel *monitor_chan;
+
+	helper_chan = wlan_vdev_mlme_get_des_chan(helper_vdev);
+	monitor_chan = wlan_vdev_mlme_get_des_chan(monitor_vdev);
+	if (helper_chan && monitor_chan)
+		qdf_mem_copy(helper_chan, monitor_chan, sizeof(*helper_chan));
+
+	helper_chan = wlan_vdev_mlme_get_bss_chan(helper_vdev);
+	monitor_chan = wlan_vdev_mlme_get_bss_chan(monitor_vdev);
+	if (helper_chan && monitor_chan)
+		qdf_mem_copy(helper_chan, monitor_chan, sizeof(*helper_chan));
+}
+
+static bool
+sme_injection_helper_same_channel(const struct channel_change_req *req)
+{
+	const struct channel_change_req *saved_req =
+		&sme_injection_helper.channel_req;
+
+	if (saved_req->target_chan_freq != req->target_chan_freq ||
+	    saved_req->sec_ch_offset != req->sec_ch_offset ||
+	    saved_req->ch_width != req->ch_width ||
+	    saved_req->center_freq_seg0 != req->center_freq_seg0 ||
+	    saved_req->center_freq_seg1 != req->center_freq_seg1 ||
+#ifdef WLAN_FEATURE_11BE
+	    saved_req->target_punc_bitmap != req->target_punc_bitmap ||
+#endif
+	    saved_req->dot11mode != req->dot11mode ||
+	    saved_req->nw_type != req->nw_type ||
+	    saved_req->cac_duration_ms != req->cac_duration_ms ||
+	    saved_req->dfs_regdomain != req->dfs_regdomain)
+		return false;
+
+	return !qdf_mem_cmp(&saved_req->opr_rates, &req->opr_rates,
+			    sizeof(saved_req->opr_rates)) &&
+	       !qdf_mem_cmp(&saved_req->ext_rates, &req->ext_rates,
+			    sizeof(saved_req->ext_rates));
+}
+
+static QDF_STATUS
+sme_injection_helper_start_locked(mac_handle_t mac_handle,
+				  struct wlan_objmgr_vdev *monitor_vdev,
+				  const struct channel_change_req *monitor_req)
+{
+	struct channel_change_req req;
+	QDF_STATUS status;
+
+	sme_injection_helper_copy_channel(sme_injection_helper.vdev,
+					  monitor_vdev);
+	qdf_mem_copy(&req, monitor_req, sizeof(req));
+	req.vdev_id = sme_injection_helper.vdev_id;
+
+	reinit_completion(&sme_injection_helper_vdev_event);
+	WRITE_ONCE(sme_injection_helper.event_is_up, false);
+	status = sme_send_channel_change_req(mac_handle, &req);
+	if (QDF_IS_STATUS_ERROR(status))
+		return status;
+
+	status = sme_injection_helper_wait_vdev_event(true);
+	if (QDF_IS_STATUS_ERROR(status))
+		return status;
+
+	status = wma_injection_objmgr_helper_activate(
+			sme_injection_helper.vdev, req.target_chan_freq);
+	if (QDF_IS_STATUS_SUCCESS(status)) {
+		sme_injection_helper.chanfreq = req.target_chan_freq;
+		qdf_mem_copy(&sme_injection_helper.channel_req, monitor_req,
+			     sizeof(sme_injection_helper.channel_req));
+	}
+
+	return status;
+}
+
+static QDF_STATUS
+sme_injection_helper_destroy_locked(mac_handle_t mac_handle)
+{
+	struct wlan_objmgr_vdev *vdev = sme_injection_helper.vdev;
+	uint8_t vdev_id = sme_injection_helper.vdev_id;
+	QDF_STATUS status = QDF_STATUS_SUCCESS;
+	QDF_STATUS tmp;
+	unsigned long timeout;
+
+	if (!sme_injection_helper.active)
+		return QDF_STATUS_SUCCESS;
+	if (sme_injection_helper.deleting)
+		return QDF_STATUS_E_BUSY;
+
+	wma_injection_objmgr_helper_detach(vdev);
+	if (sme_injection_helper.session_created) {
+		reinit_completion(&sme_injection_helper_vdev_event);
+		WRITE_ONCE(sme_injection_helper.event_is_up, true);
+		tmp = sme_delete_mon_session(mac_handle,
+					    sme_injection_helper.vdev_id);
+		if (QDF_IS_STATUS_SUCCESS(tmp))
+			tmp = sme_injection_helper_wait_vdev_event(false);
+		if (QDF_IS_STATUS_ERROR(tmp))
+			status = tmp;
+		sme_injection_helper.session_created = false;
+	}
+
+	reinit_completion(&sme_injection_helper_delete_event);
+	sme_injection_helper.deleting = true;
+	tmp = sme_vdev_delete(mac_handle, vdev);
+	if (QDF_IS_STATUS_ERROR(tmp)) {
+		sme_injection_helper.deleting = false;
+		return tmp;
+	}
+
+	timeout = wait_for_completion_timeout(
+			&sme_injection_helper_delete_event,
+			msecs_to_jiffies(SME_CMD_VDEV_CREATE_DELETE_TIMEOUT));
+	if (!timeout) {
+		/* Keep late firmware completion away from the HDD session callback. */
+		set_bit(vdev_id, sme_injection_orphan_deletes);
+		smp_mb__after_atomic();
+		if (completion_done(&sme_injection_helper_delete_event))
+			clear_bit(vdev_id, sme_injection_orphan_deletes);
+		sme_warn("Injection helper delete timed out: vdev=%u", vdev_id);
+		qdf_mem_zero(&sme_injection_helper,
+			     sizeof(sme_injection_helper));
+		return QDF_STATUS_E_TIMEOUT;
+	}
+
+	clear_bit(vdev_id, sme_injection_orphan_deletes);
+	if (QDF_IS_STATUS_ERROR(status))
+		sme_warn("Injection helper stop completion failed during teardown: %d",
+			 status);
+	qdf_mem_zero(&sme_injection_helper, sizeof(sme_injection_helper));
+	return QDF_STATUS_SUCCESS;
+}
+
+static QDF_STATUS
+sme_injection_helper_create_locked(mac_handle_t mac_handle,
+				   struct wlan_objmgr_vdev *monitor_vdev,
+				   const struct channel_change_req *monitor_req)
+{
+	struct wlan_vdev_create_params params = {0};
+	struct wlan_objmgr_vdev *vdev;
+	uint8_t *monitor_mac;
+	QDF_STATUS status;
+
+	monitor_mac = wlan_vdev_mlme_get_macaddr(monitor_vdev);
+	if (!monitor_mac)
+		return QDF_STATUS_E_INVAL;
+
+	/* The marker makes only the firmware/CDP identity AP-shaped. */
+	params.opmode = QDF_MONITOR_MODE;
+	params.flags = WLAN_VDEV_CREATE_INTERNAL_HELPER;
+	params.size_vdev_priv = sizeof(struct vdev_osif_priv);
+	/* Deliberately omit legacy_osif: this vdev has no adapter or netdev. */
+	params.legacy_osif = NULL;
+	qdf_mem_copy(params.macaddr, monitor_mac, QDF_MAC_ADDR_SIZE);
+	params.macaddr[0] = (params.macaddr[0] ^ 0x04) | 0x02;
+	params.macaddr[0] &= ~0x01;
+
+	vdev = sme_vdev_create(mac_handle, &params);
+	if (!vdev)
+		return QDF_STATUS_E_FAILURE;
+
+	sme_injection_helper.vdev = vdev;
+	sme_injection_helper.vdev_id = wlan_vdev_get_id(vdev);
+	sme_injection_helper.monitor_vdev_id = wlan_vdev_get_id(monitor_vdev);
+	sme_injection_helper.active = true;
+
+	status = sme_vdev_post_vdev_create_setup(mac_handle, vdev);
+	if (QDF_IS_STATUS_ERROR(status))
+		goto fail;
+
+	status = wma_injection_objmgr_helper_attach(
+			vdev, sme_injection_helper.monitor_vdev_id,
+			monitor_req->target_chan_freq);
+	if (QDF_IS_STATUS_ERROR(status))
+		goto fail;
+
+	status = sme_create_mon_session(mac_handle, params.macaddr,
+					sme_injection_helper.vdev_id);
+	if (QDF_IS_STATUS_ERROR(status))
+		goto fail;
+	sme_injection_helper.session_created = true;
+
+	status = sme_injection_helper_start_locked(mac_handle, monitor_vdev,
+						   monitor_req);
+	if (QDF_IS_STATUS_SUCCESS(status)) {
+		sme_info("Internal injection helper ready: monitor=%u helper=%u freq=%u",
+			 sme_injection_helper.monitor_vdev_id,
+			 sme_injection_helper.vdev_id,
+			 sme_injection_helper.chanfreq);
+		return status;
+	}
+
+fail:
+	sme_err("Internal injection helper create failed: status=%d", status);
+	sme_injection_helper_destroy_locked(mac_handle);
+	return status;
+}
+
+QDF_STATUS
+sme_injection_helper_sync(mac_handle_t mac_handle,
+			  struct wlan_objmgr_vdev *monitor_vdev,
+			  const struct channel_change_req *monitor_req)
+{
+	QDF_STATUS status;
+
+	if (!mac_handle || !monitor_vdev || !monitor_req ||
+	    !monitor_req->target_chan_freq)
+		return QDF_STATUS_E_INVAL;
+
+	mutex_lock(&sme_injection_helper_lock);
+	if (sme_injection_helper.deleting) {
+		status = QDF_STATUS_E_BUSY;
+		goto out;
+	}
+
+	if (!sme_injection_helper.active) {
+		status = sme_injection_helper_create_locked(
+				mac_handle, monitor_vdev, monitor_req);
+		goto out;
+	}
+
+	if (sme_injection_helper.monitor_vdev_id !=
+			wlan_vdev_get_id(monitor_vdev)) {
+		status = QDF_STATUS_E_FAILURE;
+		goto recreate;
+	}
+
+	if (sme_injection_helper_same_channel(monitor_req)) {
+		status = QDF_STATUS_SUCCESS;
+		goto out;
+	}
+
+	status = sme_injection_helper_start_locked(mac_handle, monitor_vdev,
+						   monitor_req);
+	if (QDF_IS_STATUS_SUCCESS(status))
+		goto out;
+
+	sme_warn("Injection helper restart failed (%d), recreating", status);
+recreate:
+	status = sme_injection_helper_destroy_locked(mac_handle);
+	if (QDF_IS_STATUS_SUCCESS(status))
+		status = sme_injection_helper_create_locked(
+				mac_handle, monitor_vdev, monitor_req);
+out:
+	mutex_unlock(&sme_injection_helper_lock);
+	return status;
+}
+
+void sme_injection_helper_destroy(mac_handle_t mac_handle)
+{
+	if (!mac_handle)
+		return;
+
+	mutex_lock(&sme_injection_helper_lock);
+	sme_injection_helper_destroy_locked(mac_handle);
+	mutex_unlock(&sme_injection_helper_lock);
+}
+#endif
+
 void
 sme_set_del_peers_ind_callback(mac_handle_t mac_handle,
 			       void (*callback)(struct wlan_objmgr_psoc *psoc,
@@ -16940,6 +17280,11 @@ QDF_STATUS sme_process_monitor_mode_vdev_evt(uint8_t vdev_id, bool is_up)
 {
 	mac_handle_t mac_handle;
 	struct mac_context *mac;
+
+#ifdef FEATURE_FRAME_INJECTION_SUPPORT
+	if (sme_injection_helper_complete_vdev_event(vdev_id, is_up))
+		return QDF_STATUS_SUCCESS;
+#endif
 
 	mac_handle = cds_get_context(QDF_MODULE_ID_SME);
 	if (!mac_handle)

@@ -31158,6 +31158,7 @@ static int __wlan_hdd_cfg80211_set_mon_ch(struct wiphy *wiphy,
 	mac_handle_t mac_handle;
 	struct qdf_mac_addr bssid;
 	struct channel_change_req *req;
+	struct channel_change_req helper_req;
 	struct ch_params ch_params = {0};
 	int ret;
 	enum channel_state chan_freq_state;
@@ -31284,6 +31285,7 @@ static int __wlan_hdd_cfg80211_set_mon_ch(struct wiphy *wiphy,
 		return qdf_status_to_os_return(status);
 	}
 
+	qdf_mem_copy(&helper_req, req, sizeof(helper_req));
 	status = sme_send_channel_change_req(mac_handle, req);
 	qdf_mem_free(req);
 
@@ -31328,6 +31330,12 @@ static int __wlan_hdd_cfg80211_set_mon_ch(struct wiphy *wiphy,
 		hdd_warn("failed to restore monitor RX filters: %d", status);
 	else
 		msleep(20);
+
+	status = sme_injection_helper_sync(mac_handle,
+					   adapter->deflink->vdev,
+					   &helper_req);
+	if (QDF_IS_STATUS_ERROR(status))
+		hdd_warn("internal injection helper unavailable: %d", status);
 	wma_injection_channel_change_end();
 
 	hdd_exit();

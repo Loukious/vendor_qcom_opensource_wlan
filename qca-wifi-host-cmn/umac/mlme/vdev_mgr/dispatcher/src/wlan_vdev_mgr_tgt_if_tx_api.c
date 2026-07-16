@@ -131,6 +131,11 @@ QDF_STATUS tgt_vdev_mgr_create_send(
 	vdev_info.op_mode = wlan_util_vdev_get_cdp_txrx_opmode(vdev);
 	vdev_info.subtype = wlan_util_vdev_get_cdp_txrx_subtype(vdev);
 	vdev_info.qdf_opmode = wlan_vdev_mlme_get_opmode(vdev);
+	if (vdev->vdev_objmgr.c_flags & WLAN_VDEV_CREATE_INTERNAL_HELPER) {
+		vdev_info.op_mode = wlan_op_mode_ap;
+		vdev_info.subtype = wlan_op_subtype_none;
+		vdev_info.qdf_opmode = QDF_SAP_MODE;
+	}
 	wlan_vdev_mgr_fill_mlo_bridge_vap_params(&vdev_info, vdev);
 	wlan_vdev_mgr_fill_mlo_params(&vdev_info, param);
 	pdev = wlan_vdev_get_pdev(vdev);
@@ -893,4 +898,3 @@ end:
 	wlan_objmgr_vdev_release_ref(vdev, WLAN_MLME_OBJMGR_ID);
 	return status;
 }
-

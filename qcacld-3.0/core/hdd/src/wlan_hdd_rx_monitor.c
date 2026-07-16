@@ -46,7 +46,10 @@ int hdd_enable_monitor_mode(struct net_device *dev)
 int hdd_disable_monitor_mode(void)
 {
 	void *soc = cds_get_context(QDF_MODULE_ID_SOC);
+	struct hdd_context *hdd_ctx = cds_get_context(QDF_MODULE_ID_HDD);
 
 	wma_injection_pre_stop_cleanup();
+	if (hdd_ctx)
+		sme_injection_helper_destroy(hdd_ctx->mac_handle);
 	return cdp_reset_monitor_mode(soc, OL_TXRX_PDEV_ID, false);
 }

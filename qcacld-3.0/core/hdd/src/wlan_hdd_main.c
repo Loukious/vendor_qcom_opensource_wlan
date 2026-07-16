@@ -10501,6 +10501,9 @@ wlan_hdd_delete_mon_link(struct hdd_adapter *adapter,
 	if (QDF_IS_STATUS_ERROR(status))
 		hdd_err_rl("stop failed montior mode");
 
+	wma_injection_pre_stop_cleanup();
+	sme_injection_helper_destroy(hdd_ctx->mac_handle);
+
 	status = qdf_event_reset(&adapter->qdf_monitor_mode_vdev_stop_event);
 	if (QDF_IS_STATUS_ERROR(status))
 		hdd_err_rl("failed to reinit vdev stop event");
@@ -11307,7 +11310,9 @@ int wlan_hdd_set_mon_chan(struct hdd_adapter *adapter)
 	struct hdd_monitor_ctx *mon_ctx;
 	struct wlan_hdd_link_info *link_info;
 	QDF_STATUS status = QDF_STATUS_E_INVAL;
+	QDF_STATUS helper_status;
 	struct channel_change_req *req;
+	struct channel_change_req helper_req;
 	struct wlan_channel *des_chan;
 	struct ch_params ch_params;
 	int ret;
@@ -11396,9 +11401,18 @@ int wlan_hdd_set_mon_chan(struct hdd_adapter *adapter)
 
 		sme_fill_channel_change_request(hdd_ctx->mac_handle, req,
 						mon_ctx->phy_mode);
+		qdf_mem_copy(&helper_req, req, sizeof(helper_req));
+		helper_status = wma_injection_channel_change_begin(
+				link_info->vdev_id, mon_ctx->freq);
+		if (QDF_IS_STATUS_ERROR(helper_status)) {
+			qdf_mem_free(req);
+			adapter->monitor_mode_vdev_up_in_progress = false;
+			return qdf_status_to_os_return(helper_status);
+		}
 		status = sme_send_channel_change_req(hdd_ctx->mac_handle, req);
 		qdf_mem_free(req);
 		if (status) {
+			wma_injection_channel_change_end();
 			hdd_err("Status: %d Failed to set sme_roam Channel for monitor mode",
 				status);
 			adapter->monitor_mode_vdev_up_in_progress = false;
@@ -11424,7 +11438,15 @@ int wlan_hdd_set_mon_chan(struct hdd_adapter *adapter)
 					   status);
 
 			adapter->monitor_mode_vdev_up_in_progress = false;
+		} else {
+			helper_status = sme_injection_helper_sync(
+					hdd_ctx->mac_handle, link_info->vdev,
+					&helper_req);
+			if (QDF_IS_STATUS_ERROR(helper_status))
+				hdd_warn("internal injection helper unavailable: %d",
+					 helper_status);
 		}
+		wma_injection_channel_change_end();
 	}
 		return qdf_status_to_os_return(status);
 }
@@ -21559,6 +21581,7 @@ static void hdd_stop_present_mode(struct hdd_context *hdd_ctx,
 		qdf_wake_lock_release(&hdd_ctx->monitor_mode_wakelock,
 				      WIFI_POWER_EVENT_WAKELOCK_MONITOR_MODE);
 		wma_injection_pre_stop_cleanup();
+		sme_injection_helper_destroy(hdd_ctx->mac_handle);
 		fallthrough;
 	case QDF_GLOBAL_MISSION_MODE:
 	case QDF_GLOBAL_FTM_MODE:
