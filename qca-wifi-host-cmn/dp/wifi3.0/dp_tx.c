@@ -4324,10 +4324,10 @@ dp_tx_send_exception(struct cdp_soc_t *soc_hdl, uint8_t vdev_id,
 		 * Keep monitor injection on the host RAW path.  Sniffer metadata
 		 * marks an extension descriptor as TO_FW, but firmware expects that
 		 * metadata on a direct-buffer replay frame and can reject this RAW
-		 * descriptor form.  TID 0 matches the normal RAW datapath while the
-		 * flag only relaxes its data-frame validation below.
+		 * descriptor form.  Use the firmware management TID for injected
+		 * 802.11 management frames; the flag relaxes RAW data validation below.
 		 */
-		msdu_info.tid = HTT_TX_EXT_TID_DEFAULT;
+		msdu_info.tid = HTT_TX_EXT_TID_MGMT;
 		msdu_info.is_tx_sniffer = 1;
 		msdu_info.peer_id = tx_exc_metadata->peer_id;
 

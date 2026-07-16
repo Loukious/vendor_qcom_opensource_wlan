@@ -67,6 +67,7 @@
 #include <cdp_txrx_peer_ops.h>
 #include <cdp_txrx_cfg.h>
 #include "cdp_txrx_stats.h"
+#include "cdp_txrx_mon.h"
 #include <cdp_txrx_misc.h>
 #include "wlan_mgmt_txrx_utils_api.h"
 #include "wlan_objmgr_psoc_obj.h"
@@ -423,6 +424,13 @@ __wma_injection_ensure_helper(tp_wma_handle wma, uint8_t monitor_vdev_id,
 		goto fail;
 	helper->wmi_up = true;
 	msleep(50);
+
+	stage = "monitor_filter_refresh";
+	status = cdp_refresh_monitor_mode(
+			soc, wlan_objmgr_pdev_get_pdev_id(wma->pdev));
+	if (QDF_IS_STATUS_ERROR(status))
+		goto fail;
+	msleep(20);
 
 	helper->created = true;
 	wma_info("Injection TX helper ready: monitor=%u helper=%u peer=%u freq=%u mac=%pM bssid=%pM",
