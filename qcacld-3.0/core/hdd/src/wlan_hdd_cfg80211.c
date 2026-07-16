@@ -31317,7 +31317,8 @@ static int __wlan_hdd_cfg80211_set_mon_ch(struct wiphy *wiphy,
 
 	/* Helper vdev setup rewrites the shared RXDMA ring selection. */
 	status = cdp_refresh_monitor_mode(
-			cds_get_context(QDF_MODULE_ID_SOC), OL_TXRX_PDEV_ID);
+			cds_get_context(QDF_MODULE_ID_SOC), OL_TXRX_PDEV_ID,
+			adapter->deflink->vdev_id);
 	if (QDF_IS_STATUS_ERROR(status))
 		hdd_warn("failed to restore monitor RX filters: %d", status);
 	else

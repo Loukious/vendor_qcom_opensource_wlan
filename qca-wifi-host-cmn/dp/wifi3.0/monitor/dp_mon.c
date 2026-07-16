@@ -628,15 +628,17 @@ fail:
 }
 
 static QDF_STATUS
-dp_refresh_monitor_mode(struct cdp_soc_t *dp_soc, uint8_t pdev_id)
+dp_refresh_monitor_mode(struct cdp_soc_t *dp_soc, uint8_t pdev_id,
+			uint8_t vdev_id)
 {
 	struct dp_soc *soc = (struct dp_soc *)dp_soc;
 	struct dp_pdev *pdev;
 
 	pdev = dp_get_pdev_from_soc_pdev_id_wifi3(soc, pdev_id);
-	if (!pdev || !pdev->monitor_pdev ||
-	    !pdev->monitor_pdev->monitor_configured)
+	if (!pdev || !pdev->monitor_pdev)
 		return QDF_STATUS_E_INVAL;
+	if (!pdev->monitor_pdev->monitor_configured)
+		return dp_vdev_set_monitor_mode(dp_soc, vdev_id, false);
 
 	return dp_mon_filter_update(pdev);
 }
