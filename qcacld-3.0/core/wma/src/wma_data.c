@@ -94,6 +94,7 @@
 #include <linux/wait.h>
 #include <linux/workqueue.h>
 #include "wlan_reg_services_api.h"
+#include "wlan_vdev_mlme_api.h"
 
 /*
  * 1: native simple sniffer descriptor (default)
@@ -325,8 +326,12 @@ __wma_injection_ensure_helper(tp_wma_handle wma, uint8_t monitor_vdev_id,
 	struct vdev_set_params encap = {0};
 	struct peer_create_params peer = {0};
 	struct wma_injection_helper *helper = &wma_injection_ctx.helper;
+	struct wlan_objmgr_vdev *monitor_vdev;
+	struct vdev_mlme_obj *monitor_mlme;
+	struct wlan_channel *monitor_chan;
 	ol_txrx_soc_handle soc = cds_get_context(QDF_MODULE_ID_SOC);
 	uint8_t *monitor_mac;
+	uint32_t dfs_region = 0;
 	const char *stage = "validate";
 	int i, max_id, retries;
 	QDF_STATUS status;
@@ -344,10 +349,17 @@ __wma_injection_ensure_helper(tp_wma_handle wma, uint8_t monitor_vdev_id,
 	if (!soc || monitor_vdev_id >= wma->max_bssid ||
 	    !wma->interfaces[monitor_vdev_id].vdev)
 		return QDF_STATUS_E_INVAL;
-	monitor_mac = wlan_vdev_mlme_get_macaddr(
-			wma->interfaces[monitor_vdev_id].vdev);
+	monitor_vdev = wma->interfaces[monitor_vdev_id].vdev;
+	monitor_mac = wlan_vdev_mlme_get_macaddr(monitor_vdev);
 	if (!monitor_mac)
 		return QDF_STATUS_E_INVAL;
+	monitor_mlme = wlan_vdev_mlme_get_cmpt_obj(monitor_vdev);
+	monitor_chan = wlan_vdev_mlme_get_des_chan(monitor_vdev);
+	if (!monitor_chan || monitor_chan->ch_freq != chanfreq)
+		monitor_chan = wlan_vdev_mlme_get_bss_chan(monitor_vdev);
+	if (!monitor_mlme || !monitor_chan ||
+	    monitor_chan->ch_freq != chanfreq)
+		return QDF_STATUS_E_AGAIN;
 
 	max_id = qdf_min((int)wma->max_bssid - 1,
 			 CFG_TGT_NUM_VDEV - 2);
@@ -441,15 +453,41 @@ __wma_injection_ensure_helper(tp_wma_handle wma, uint8_t monitor_vdev_id,
 
 	stage = "vdev_start";
 	start.vdev_id = helper->vdev_id;
+	start.channel.chan_id = monitor_chan->ch_ieee;
+	start.channel.pwr = monitor_mlme->mgmt.generic.tx_power;
 	start.channel.mhz = chanfreq;
-	start.channel.cfreq1 = chanfreq;
-	start.channel.phy_mode = chanfreq < 4000 ?
-				 WLAN_PHYMODE_11G : WLAN_PHYMODE_11A;
-	start.channel.maxregpower =
-		wlan_reg_get_channel_reg_power_for_freq(wma->pdev, chanfreq);
-	start.channel.maxpower = start.channel.maxregpower;
+	start.channel.half_rate = monitor_mlme->mgmt.rate_info.half_rate;
+	start.channel.quarter_rate = monitor_mlme->mgmt.rate_info.quarter_rate;
+	start.channel.dfs_set = wlan_reg_is_dfs_for_freq(wma->pdev,
+							 chanfreq);
+	start.channel.is_chan_passive = start.channel.dfs_set;
+	start.channel.allow_ht = monitor_mlme->proto.ht_info.allow_ht;
+	start.channel.allow_vht = monitor_mlme->proto.vht_info.allow_vht;
+	/* MLME stores the firmware/WMI phymode required by vdev_start. */
+	start.channel.phy_mode = monitor_mlme->mgmt.generic.phy_mode;
+	start.channel.cfreq1 = monitor_chan->ch_cfreq1 ?: chanfreq;
+	start.channel.cfreq2 = monitor_chan->ch_cfreq2;
+	start.channel.maxpower = monitor_mlme->mgmt.generic.maxpower;
+	start.channel.minpower = monitor_mlme->mgmt.generic.minpower;
+	start.channel.maxregpower = monitor_mlme->mgmt.generic.maxregpower;
+	start.channel.antennamax = monitor_mlme->mgmt.generic.antennamax;
+	start.channel.reg_class_id = monitor_mlme->mgmt.generic.reg_class_id;
+#ifdef WLAN_FEATURE_11BE
+	start.channel.puncture_bitmap = monitor_chan->puncture_bitmap;
+	start.eht_ops = monitor_mlme->proto.eht_ops_info.eht_ops;
+#endif
 	start.preferred_tx_streams = 1;
 	start.preferred_rx_streams = 1;
+	wlan_reg_get_dfs_region(wma->pdev, &dfs_region);
+	start.regdomain = dfs_region;
+	start.he_ops = monitor_mlme->proto.he_ops_info.he_ops;
+	if (trace)
+		pr_err("qca_inject: helper channel freq=%u mode=%u cfreq1=%u reg=%u power=%d/%d/%d class=%u\n",
+		       start.channel.mhz, start.channel.phy_mode,
+		       start.channel.cfreq1, start.regdomain,
+		       start.channel.minpower, start.channel.maxpower,
+		       start.channel.maxregpower,
+		       start.channel.reg_class_id);
 	status = wmi_unified_vdev_start_send(wma->wmi_handle, &start);
 	if (QDF_IS_STATUS_ERROR(status))
 		goto fail;
