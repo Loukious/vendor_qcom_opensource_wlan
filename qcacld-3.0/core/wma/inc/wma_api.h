@@ -43,8 +43,10 @@ typedef void *WMA_HANDLE;
 
 #ifdef FEATURE_FRAME_INJECTION_SUPPORT
 QDF_STATUS wma_injection_tx(qdf_nbuf_t nbuf, uint8_t monitor_vdev_id);
-QDF_STATUS wma_injection_prepare(uint8_t monitor_vdev_id,
-				 uint32_t chanfreq);
+QDF_STATUS
+wma_injection_channel_change_begin(uint8_t monitor_vdev_id,
+				   uint32_t chanfreq);
+void wma_injection_channel_change_end(void);
 bool wma_injection_complete(void *wma_handle, uint16_t desc_id,
 			    uint32_t status);
 bool wma_injection_dp_complete(void *wma_handle, qdf_nbuf_t nbuf,
@@ -58,9 +60,14 @@ wma_injection_tx(qdf_nbuf_t nbuf, uint8_t monitor_vdev_id)
 }
 
 static inline QDF_STATUS
-wma_injection_prepare(uint8_t monitor_vdev_id, uint32_t chanfreq)
+wma_injection_channel_change_begin(uint8_t monitor_vdev_id,
+				   uint32_t chanfreq)
 {
-	return QDF_STATUS_E_NOSUPPORT;
+	return QDF_STATUS_SUCCESS;
+}
+
+static inline void wma_injection_channel_change_end(void)
+{
 }
 
 static inline bool

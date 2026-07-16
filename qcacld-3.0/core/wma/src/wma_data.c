@@ -68,6 +68,7 @@
 #include <cdp_txrx_cfg.h>
 #include "cdp_txrx_stats.h"
 #include <cdp_txrx_misc.h>
+#include <cdp_txrx_mon.h>
 #include "wlan_mgmt_txrx_utils_api.h"
 #include "wlan_objmgr_psoc_obj.h"
 #include "wlan_objmgr_pdev_obj.h"
@@ -161,6 +162,7 @@ static struct {
 	uint16_t in_flight;
 	bool active;
 	bool paused;
+	bool channel_change_paused;
 } wma_injection_ctx;
 
 static void wma_injection_work(struct work_struct *work);
@@ -474,6 +476,12 @@ __wma_injection_ensure_helper(tp_wma_handle wma, uint8_t monitor_vdev_id,
 		goto fail;
 	helper->wmi_up = true;
 	msleep(50);
+
+	stage = "monitor_filters";
+	status = cdp_refresh_monitor_mode(soc, OL_TXRX_PDEV_ID,
+					  monitor_vdev_id);
+	if (QDF_IS_STATUS_ERROR(status))
+		goto fail;
 
 	smp_store_release(&helper->created, true);
 	wma_info("Injection TX helper ready: monitor=%u helper=%u peer=%u freq=%u mac=%pM bssid=%pM",
@@ -813,41 +821,86 @@ QDF_STATUS wma_injection_tx(qdf_nbuf_t nbuf, uint8_t monitor_vdev_id)
 	return QDF_STATUS_SUCCESS;
 }
 
-QDF_STATUS wma_injection_prepare(uint8_t monitor_vdev_id, uint32_t chanfreq)
+QDF_STATUS
+wma_injection_channel_change_begin(uint8_t monitor_vdev_id,
+				   uint32_t chanfreq)
 {
 	tp_wma_handle wma = wma_injection_ctx.wma;
-	QDF_STATUS status = QDF_STATUS_E_BUSY;
+	struct wma_injection_helper *helper = &wma_injection_ctx.helper;
+	QDF_STATUS status = QDF_STATUS_SUCCESS;
 	unsigned long flags;
 
-	if (!wma_injection_ctx.active || !wma)
-		return QDF_STATUS_E_AGAIN;
+	if (!READ_ONCE(wma_injection_ctx.active) || !wma)
+		return QDF_STATUS_SUCCESS;
 	if (!chanfreq || monitor_vdev_id >= wma->max_bssid ||
 	    !wma->interfaces[monitor_vdev_id].vdev)
 		return QDF_STATUS_E_INVAL;
 
 	mutex_lock(&wma_injection_ctx.lifecycle_lock);
 	spin_lock_irqsave(&wma_injection_ctx.lock, flags);
+	if (!wma_injection_ctx.active) {
+		spin_unlock_irqrestore(&wma_injection_ctx.lock, flags);
+		mutex_unlock(&wma_injection_ctx.lifecycle_lock);
+		return QDF_STATUS_SUCCESS;
+	}
+	if (wma_injection_ctx.channel_change_paused) {
+		spin_unlock_irqrestore(&wma_injection_ctx.lock, flags);
+		mutex_unlock(&wma_injection_ctx.lifecycle_lock);
+		return QDF_STATUS_E_BUSY;
+	}
 	wma_injection_ctx.paused = true;
+	wma_injection_ctx.channel_change_paused = true;
 	spin_unlock_irqrestore(&wma_injection_ctx.lock, flags);
 	flush_work(&wma_injection_ctx.work);
 
 	if (!wma_injection_wait_for_refill()) {
 		wma_warn("Timed out draining injection refill for channel change");
+		status = QDF_STATUS_E_TIMEOUT;
 	} else {
 		mutex_lock(&wma_injection_ctx.helper_lock);
-		if (wma_injection_wait_for_idle())
-			status = __wma_injection_ensure_helper(
-					wma, monitor_vdev_id, chanfreq);
+		if (!wma_injection_wait_for_idle()) {
+			wma_warn("Timed out draining injection for channel change");
+			status = QDF_STATUS_E_BUSY;
+		} else if (smp_load_acquire(&helper->created) &&
+			   (helper->monitor_vdev_id != monitor_vdev_id ||
+			    helper->chanfreq != chanfreq)) {
+			__wma_injection_destroy_helper(wma);
+		}
 		mutex_unlock(&wma_injection_ctx.helper_lock);
 	}
 
-	spin_lock_irqsave(&wma_injection_ctx.lock, flags);
-	wma_injection_ctx.paused = false;
-	spin_unlock_irqrestore(&wma_injection_ctx.lock, flags);
-	wma_injection_queue_work();
+	if (QDF_IS_STATUS_ERROR(status)) {
+		spin_lock_irqsave(&wma_injection_ctx.lock, flags);
+		wma_injection_ctx.channel_change_paused = false;
+		wma_injection_ctx.paused = false;
+		spin_unlock_irqrestore(&wma_injection_ctx.lock, flags);
+	}
 	mutex_unlock(&wma_injection_ctx.lifecycle_lock);
+	if (QDF_IS_STATUS_ERROR(status))
+		wma_injection_queue_work();
 
 	return status;
+}
+
+void wma_injection_channel_change_end(void)
+{
+	unsigned long flags;
+	bool resume = false;
+
+	mutex_lock(&wma_injection_ctx.lifecycle_lock);
+	spin_lock_irqsave(&wma_injection_ctx.lock, flags);
+	if (wma_injection_ctx.channel_change_paused) {
+		wma_injection_ctx.channel_change_paused = false;
+		if (wma_injection_ctx.active) {
+			wma_injection_ctx.paused = false;
+			resume = true;
+		}
+	}
+	spin_unlock_irqrestore(&wma_injection_ctx.lock, flags);
+	mutex_unlock(&wma_injection_ctx.lifecycle_lock);
+
+	if (resume)
+		wma_injection_queue_work();
 }
 
 bool wma_injection_complete(void *wma_context, uint16_t desc_id,
@@ -928,6 +981,7 @@ void wma_injection_pre_stop_cleanup(void)
 	mutex_lock(&wma_injection_ctx.lifecycle_lock);
 	spin_lock_irqsave(&wma_injection_ctx.lock, flags);
 	wma_injection_ctx.paused = true;
+	wma_injection_ctx.channel_change_paused = false;
 	spin_unlock_irqrestore(&wma_injection_ctx.lock, flags);
 	flush_work(&wma_injection_ctx.work);
 	if (!wma_injection_wait_for_refill()) {
@@ -970,6 +1024,7 @@ static void wma_injection_deinit(tp_wma_handle wma)
 	spin_lock_irqsave(&wma_injection_ctx.lock, flags);
 	wma_injection_ctx.active = false;
 	wma_injection_ctx.paused = true;
+	wma_injection_ctx.channel_change_paused = false;
 	spin_unlock_irqrestore(&wma_injection_ctx.lock, flags);
 	cancel_delayed_work_sync(&wma_injection_ctx.reaper);
 	cancel_work_sync(&wma_injection_ctx.work);

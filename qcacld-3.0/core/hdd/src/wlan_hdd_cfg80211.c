@@ -31254,8 +31254,10 @@ static int __wlan_hdd_cfg80211_set_mon_ch(struct wiphy *wiphy,
 	qdf_mem_zero(&ch_params, sizeof(struct ch_params));
 
 	req = qdf_mem_malloc(sizeof(struct channel_change_req));
-	if (!req)
+	if (!req) {
+		adapter->monitor_mode_vdev_up_in_progress = false;
 		return -ENOMEM;
+	}
 
 	req->vdev_id = adapter->deflink->vdev_id;
 	req->target_chan_freq = chandef->chan->center_freq;
@@ -31271,20 +31273,22 @@ static int __wlan_hdd_cfg80211_set_mon_ch(struct wiphy *wiphy,
 
 	sme_fill_channel_change_request(mac_handle, req, mon_ctx->phy_mode);
 
-	/*
-	 * The helper changes pdev RX programming when it is brought up.  Create
-	 * it before the monitor vdev channel transition so the normal monitor
-	 * vdev-up path installs the final RX filters afterwards.
-	 */
-	status = wma_injection_prepare(adapter->deflink->vdev_id,
-				       chandef->chan->center_freq);
-	if (QDF_IS_STATUS_ERROR(status))
-		hdd_warn("failed to prepare monitor injection helper: %d", status);
+	/* Keep queued injection frames out of the old channel transition. */
+	status = wma_injection_channel_change_begin(
+			adapter->deflink->vdev_id,
+			chandef->chan->center_freq);
+	if (QDF_IS_STATUS_ERROR(status)) {
+		hdd_warn("failed to quiesce monitor injection: %d", status);
+		qdf_mem_free(req);
+		adapter->monitor_mode_vdev_up_in_progress = false;
+		return qdf_status_to_os_return(status);
+	}
 
 	status = sme_send_channel_change_req(mac_handle, req);
 	qdf_mem_free(req);
 
 	if (status) {
+		wma_injection_channel_change_end();
 		hdd_err_rl("Failed to set sme_RoamChannel for monitor mode status: %d",
 			   status);
 		adapter->monitor_mode_vdev_up_in_progress = false;
@@ -31297,6 +31301,7 @@ static int __wlan_hdd_cfg80211_set_mon_ch(struct wiphy *wiphy,
 				       &adapter->qdf_monitor_mode_vdev_up_event,
 					WLAN_MONITOR_MODE_VDEV_UP_EVT);
 	if (QDF_IS_STATUS_ERROR(status)) {
+		wma_injection_channel_change_end();
 		hdd_err_rl("monitor vdev up event time out vdev id: %d",
 			  adapter->deflink->vdev_id);
 		if (adapter->qdf_monitor_mode_vdev_up_event.force_set)
@@ -31323,6 +31328,7 @@ static int __wlan_hdd_cfg80211_set_mon_ch(struct wiphy *wiphy,
 		hdd_warn("failed to restore monitor RX filters: %d", status);
 	else
 		msleep(20);
+	wma_injection_channel_change_end();
 
 	hdd_exit();
 
