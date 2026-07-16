@@ -57,6 +57,14 @@
 #include "wlan_dp_lapb_flow.h"
 #endif
 
+#define DP_TX_INJECTION_DESC_PREFIX 0xf000
+
+static inline bool dp_tx_is_injection_nbuf(qdf_nbuf_t nbuf)
+{
+	return (QDF_NBUF_CB_MGMT_TXRX_DESC_ID(nbuf) &
+		DP_TX_INJECTION_DESC_PREFIX) == DP_TX_INJECTION_DESC_PREFIX;
+}
+
 #ifdef FEATURE_FRAME_INJECTION_SUPPORT
 extern bool wma_injection_dp_complete(void *wma_context, qdf_nbuf_t nbuf,
 				      int32_t status);
@@ -3389,7 +3397,8 @@ qdf_nbuf_t dp_tx_comp_free_buf(struct dp_soc *soc, struct dp_tx_desc_s *desc,
 		return NULL;
 
 #ifdef FEATURE_FRAME_INJECTION_SUPPORT
-	wma_injection_dp_complete(NULL, nbuf, 0);
+	if (dp_tx_is_injection_nbuf(nbuf))
+		wma_injection_dp_complete(NULL, nbuf, 0);
 #endif
 
 	/* 0 : MSDU buffer, 1 : MLE */
@@ -6661,8 +6670,7 @@ void dp_tx_comp_process_tx_status(struct dp_soc *soc,
 	}
 
 	if ((tx_desc->frm_type == dp_tx_frm_raw &&
-	     tx_desc->msdu_ext_desc) ||
-	    ((QDF_NBUF_CB_MGMT_TXRX_DESC_ID(nbuf) & 0xf000) == 0xf000)) {
+	     tx_desc->msdu_ext_desc) || dp_tx_is_injection_nbuf(nbuf)) {
 		static unsigned int raw_comp_trace_count;
 		qdf_dma_addr_t payload_iova = 0;
 		uint32_t payload_len = 0;
@@ -6682,7 +6690,8 @@ void dp_tx_comp_process_tx_status(struct dp_soc *soc,
 	}
 
 #ifdef FEATURE_FRAME_INJECTION_SUPPORT
-	wma_injection_dp_complete(NULL, nbuf, ts->status);
+	if (dp_tx_is_injection_nbuf(nbuf))
+		wma_injection_dp_complete(NULL, nbuf, ts->status);
 #endif
 
 	length = dp_tx_get_pkt_len(tx_desc);
