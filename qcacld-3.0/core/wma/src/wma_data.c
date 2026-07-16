@@ -67,7 +67,6 @@
 #include <cdp_txrx_peer_ops.h>
 #include <cdp_txrx_cfg.h>
 #include "cdp_txrx_stats.h"
-#include "cdp_txrx_mon.h"
 #include <cdp_txrx_misc.h>
 #include "wlan_mgmt_txrx_utils_api.h"
 #include "wlan_objmgr_psoc_obj.h"
@@ -89,9 +88,20 @@
 #ifdef FEATURE_FRAME_INJECTION_SUPPORT
 #include <linux/jiffies.h>
 #include <linux/list.h>
+#include <linux/moduleparam.h>
 #include <linux/mutex.h>
 #include <linux/workqueue.h>
 #include "wlan_reg_services_api.h"
+
+/*
+ * 1: native simple sniffer descriptor (default)
+ * 2: RAW extension descriptor routed through firmware metadata
+ * 3: host RAW extension descriptor
+ */
+unsigned int qca_injection_dp_variant = 1;
+module_param_named(injection_dp_variant, qca_injection_dp_variant, uint, 0644);
+MODULE_PARM_DESC(injection_dp_variant,
+		 "Direct injection descriptor: 1=native, 2=raw-fw, 3=raw-host");
 
 #define WMA_INJECTION_DESC_BASE 0xf000
 #define WMA_INJECTION_DESC_MASK 0x0fff
@@ -425,13 +435,6 @@ __wma_injection_ensure_helper(tp_wma_handle wma, uint8_t monitor_vdev_id,
 	helper->wmi_up = true;
 	msleep(50);
 
-	stage = "monitor_filter_refresh";
-	status = cdp_refresh_monitor_mode(
-			soc, wlan_objmgr_pdev_get_pdev_id(wma->pdev));
-	if (QDF_IS_STATUS_ERROR(status))
-		goto fail;
-	msleep(20);
-
 	helper->created = true;
 	wma_info("Injection TX helper ready: monitor=%u helper=%u peer=%u freq=%u mac=%pM bssid=%pM",
 		 monitor_vdev_id, helper->vdev_id, helper->peer_id,
@@ -575,8 +578,9 @@ wma_injection_send(tp_wma_handle wma, qdf_nbuf_t nbuf,
 		unsent = soc ? cdp_tx_send_exc(soc, params.vdev_id, nbuf,
 					       &tx_exc) : nbuf;
 		if (trace)
-			pr_err("qca_inject: wifi3 standalone raw send monitor=%u peer=%u desc=%u accepted=%u\n",
-			       params.vdev_id, tx_exc.peer_id, desc_id, !unsent);
+			pr_err("qca_inject: wifi3 direct send variant=%u monitor=%u peer=%u desc=%u accepted=%u\n",
+			       qca_injection_dp_variant, params.vdev_id,
+			       tx_exc.peer_id, desc_id, !unsent);
 		if (unsent) {
 			status = QDF_STATUS_E_BUSY;
 		} else {

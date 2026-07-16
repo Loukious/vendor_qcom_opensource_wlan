@@ -31269,6 +31269,17 @@ static int __wlan_hdd_cfg80211_set_mon_ch(struct wiphy *wiphy,
 	req->center_freq_seg1 = ch_params.center_freq_seg1;
 
 	sme_fill_channel_change_request(mac_handle, req, mon_ctx->phy_mode);
+
+	/*
+	 * The helper changes pdev RX programming when it is brought up.  Create
+	 * it before the monitor vdev channel transition so the normal monitor
+	 * vdev-up path installs the final RX filters afterwards.
+	 */
+	status = wma_injection_prepare(adapter->deflink->vdev_id,
+				       chandef->chan->center_freq);
+	if (QDF_IS_STATUS_ERROR(status))
+		hdd_warn("failed to prepare monitor injection helper: %d", status);
+
 	status = sme_send_channel_change_req(mac_handle, req);
 	qdf_mem_free(req);
 
@@ -31302,11 +31313,6 @@ static int __wlan_hdd_cfg80211_set_mon_ch(struct wiphy *wiphy,
 		adapter->monitor_mode_vdev_up_in_progress = false;
 		return qdf_status_to_os_return(status);
 	}
-
-	status = wma_injection_prepare(adapter->deflink->vdev_id,
-				       chandef->chan->center_freq);
-	if (QDF_IS_STATUS_ERROR(status))
-		hdd_warn("failed to prepare monitor injection helper: %d", status);
 
 	hdd_exit();
 

@@ -60,6 +60,9 @@
 #ifdef FEATURE_FRAME_INJECTION_SUPPORT
 extern bool wma_injection_dp_complete(void *wma_context, qdf_nbuf_t nbuf,
 				      int32_t status);
+extern unsigned int qca_injection_dp_variant;
+#else
+#define qca_injection_dp_variant 1
 #endif
 
 /* Flag to skip CCE classify when mesh or tid override enabled */
@@ -4314,19 +4317,18 @@ dp_tx_send_exception(struct cdp_soc_t *soc_hdl, uint8_t vdev_id,
 		goto fail;
 	}
 
-	/* RAW sniffer frames require an MSDU extension descriptor. */
+	/* Optional RAW extension formats for direct-injection diagnostics. */
 	if (tx_exc_metadata->is_tx_sniffer &&
-	    tx_exc_metadata->tx_encap_type == htt_cmn_pkt_type_raw) {
+	    tx_exc_metadata->tx_encap_type == htt_cmn_pkt_type_raw &&
+	    (qca_injection_dp_variant == 2 ||
+	     qca_injection_dp_variant == 3)) {
 		DP_STATS_INC_PKT(vdev, tx_i[xmit_type].sniffer_rcvd, 1,
 				 qdf_nbuf_len(nbuf));
 
-		/*
-		 * Keep monitor injection on the host RAW path.  Sniffer metadata
-		 * marks an extension descriptor as TO_FW, but firmware expects that
-		 * metadata on a direct-buffer replay frame and can reject this RAW
-		 * descriptor form.  Use the firmware management TID for injected
-		 * 802.11 management frames; the flag relaxes RAW data validation below.
-		 */
+		if (qca_injection_dp_variant == 2)
+			dp_tx_add_tx_sniffer_meta_data(
+				vdev, &msdu_info, tx_exc_metadata->ppdu_cookie);
+
 		msdu_info.tid = HTT_TX_EXT_TID_MGMT;
 		msdu_info.is_tx_sniffer = 1;
 		msdu_info.peer_id = tx_exc_metadata->peer_id;
@@ -6658,14 +6660,17 @@ void dp_tx_comp_process_tx_status(struct dp_soc *soc,
 		goto out;
 	}
 
-	if (tx_desc->frm_type == dp_tx_frm_raw &&
-	    tx_desc->msdu_ext_desc) {
+	if ((tx_desc->frm_type == dp_tx_frm_raw &&
+	     tx_desc->msdu_ext_desc) ||
+	    ((QDF_NBUF_CB_MGMT_TXRX_DESC_ID(nbuf) & 0xf000) == 0xf000)) {
 		static unsigned int raw_comp_trace_count;
 		qdf_dma_addr_t payload_iova = 0;
 		uint32_t payload_len = 0;
 
-		hal_tx_ext_desc_get_frag_info(tx_desc->msdu_ext_desc->vaddr, 0,
-					      &payload_iova, &payload_len);
+		if (tx_desc->msdu_ext_desc)
+			hal_tx_ext_desc_get_frag_info(
+				tx_desc->msdu_ext_desc->vaddr, 0,
+				&payload_iova, &payload_len);
 		if (raw_comp_trace_count++ < 32)
 			pr_err("qca_dpraw: complete desc=%u cb_desc=%u status=%u release=%u src=%u flags=%x ext=%pad payload=%pad len=%u txcnt=%u peer=%u tid=%u\n",
 			       tx_desc->id,

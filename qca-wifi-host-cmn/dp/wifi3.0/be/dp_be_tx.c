@@ -304,7 +304,9 @@ void dp_tx_process_htt_completion_be(struct dp_soc *soc,
 	bool pairwise;
 
 	tx_status = HTT_TX_WBM_COMPLETION_V3_TX_STATUS_GET(htt_desc[0]);
-	if (tx_desc->frm_type == dp_tx_frm_raw) {
+	if (tx_desc->frm_type == dp_tx_frm_raw ||
+	    ((QDF_NBUF_CB_MGMT_TXRX_DESC_ID(tx_desc->nbuf) & 0xf000) ==
+	     0xf000)) {
 		static unsigned int raw_htt_trace_count;
 
 		if (raw_htt_trace_count++ < 32)
@@ -1735,17 +1737,17 @@ dp_tx_hw_enqueue_be(struct dp_soc *soc, struct dp_vdev *vdev,
 				      tx_desc->nbuf);
 	dp_tx_desc_set_ktimestamp(vdev, tx_desc);
 
-	if (msdu_info->frm_type == dp_tx_frm_raw &&
-	    msdu_info->is_tx_sniffer) {
+	if (msdu_info->is_tx_sniffer) {
 		static unsigned int raw_tcl_trace_count;
 
 		if (raw_tcl_trace_count++ < 32)
-			pr_err("qca_dpraw: tcl desc=%u vdev=%u peer=%u bank=%u encap=%u op=%u ast=%u hash=%u lmac=%u bm=%u ring=%u dw0-7=%08x %08x %08x %08x %08x %08x %08x %08x\n",
+			pr_err("qca_dpraw: tcl desc=%u vdev=%u peer=%u frm=%u bank=%u encap=%u op=%u ast=%u hash=%u lmac=%u bm=%u ring=%u flags=%x len=%u off=%u dw0-7=%08x %08x %08x %08x %08x %08x %08x %08x\n",
 			       tx_desc->id, vdev->vdev_id,
-			       msdu_info->peer_id, vdev->bank_id,
-			       vdev->tx_encap_type,
+			       msdu_info->peer_id, msdu_info->frm_type,
+			       vdev->bank_id, tx_desc->tx_encap_type,
 			       vdev->opmode, ast_idx, ast_hash,
-			       vdev->lmac_id, bm_id, ring_id,
+			       vdev->lmac_id, bm_id, ring_id, tx_desc->flags,
+			       tx_desc->length, tx_desc->pkt_offset,
 			       hal_tx_desc_cached[0], hal_tx_desc_cached[1],
 			       hal_tx_desc_cached[2], hal_tx_desc_cached[3],
 			       hal_tx_desc_cached[4], hal_tx_desc_cached[5],
