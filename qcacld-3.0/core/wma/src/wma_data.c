@@ -370,8 +370,21 @@ __wma_injection_ensure_helper(tp_wma_handle wma, uint8_t monitor_vdev_id,
 	stage = "peer_setup";
 	status = cdp_peer_setup(soc, helper->vdev_id,
 				helper->peer_addr, NULL);
-	if (QDF_IS_STATUS_ERROR(status))
-		goto fail;
+	if (QDF_IS_STATUS_ERROR(status)) {
+		/*
+		 * wifi3 rejects setup completion for an AP BSS/self peer after
+		 * performing its legacy peer setup. Normal SAP bring-up ignores
+		 * that expected return as well; only accept it for the helper's
+		 * self peer so other setup failures remain fatal.
+		 */
+		if (qdf_mem_cmp(helper->peer_addr, helper->mac_addr,
+				QDF_MAC_ADDR_SIZE))
+			goto fail;
+		if (trace)
+			pr_err("qca_inject: accepted AP BSS peer setup status=%d helper=%u peer=%u\n",
+			       status, helper->vdev_id, helper->peer_id);
+		status = QDF_STATUS_SUCCESS;
+	}
 
 	stage = "vdev_start";
 	start.vdev_id = helper->vdev_id;
