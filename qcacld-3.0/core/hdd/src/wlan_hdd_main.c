@@ -17306,6 +17306,7 @@ static int hdd_pre_enable_configure(struct hdd_context *hdd_ctx)
 	void *soc = cds_get_context(QDF_MODULE_ID_SOC);
 	struct dev_set_param setparam[MAX_PDEV_PRE_ENABLE_PARAMS] = {};
 	bool check_value;
+	uint8_t pcie_config = 0;
 	uint8_t index = 0;
 
 	cdp_register_pause_cb(soc, wlan_hdd_txrx_pause_cb);
@@ -17429,20 +17430,19 @@ static int hdd_pre_enable_configure(struct hdd_context *hdd_ctx)
 		}
 	}
 
-	check_value = false;
-	ret = ucfg_fwol_get_pcie_config(hdd_ctx->psoc, &check_value);
+	ret = ucfg_fwol_get_pcie_config(hdd_ctx->psoc, &pcie_config);
 	if (QDF_IS_STATUS_ERROR(ret))
 		goto out;
 
 	if (QDF_GLOBAL_FTM_MODE == hdd_get_conparam())
 		ret = mlme_check_index_setparam(setparam,
 						wmi_pdev_param_pcie_config,
-						(int)check_value, index++,
+						(int)pcie_config, index++,
 						FTM_MAX_PDEV_PARAMS);
 	else
 		ret = mlme_check_index_setparam(setparam,
 						wmi_pdev_param_pcie_config,
-						(int)check_value, index++,
+						(int)pcie_config, index++,
 						MAX_PDEV_PRE_ENABLE_PARAMS);
 	if (QDF_IS_STATUS_ERROR(ret)) {
 		hdd_err("failed to set wmi_pdev_param_pcie_config");

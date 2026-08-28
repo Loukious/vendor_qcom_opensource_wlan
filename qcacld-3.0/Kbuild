@@ -3475,6 +3475,10 @@ ccflags-y += -D__ANDROID_COMMON_KERNEL__
 # Older MiCode base: labels whose gotos are compiled out (pmo ns offload)
 # trip -Wunused-label under CONFIG_WERROR.
 ccflags-y += -Wno-unused-label -Wno-unused-function
+# clang fails the cc-option-yn -Wmaybe-uninitialized gate below, so the
+# kernel's 2048 frame limit applies instead; say 4096 unconditionally
+# (hdd_update_acs_info needs 2592).
+ccflags-y += -Wframe-larger-than=4096
 
 # CFG80211_MLO_KEY_OPERATION_SUPPORT
 # Used to indicate the Linux Kernel contains support for ML key operation
