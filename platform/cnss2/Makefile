@@ -1,6 +1,7 @@
 # SPDX-License-Identifier: GPL-2.0-only
 
-ccflags-y += -Wmissing-prototypes
+# -Wmissing-prototypes dropped: this older MiCode base has non-static
+# functions (e.g. cnss_print_thread_trace) that the newer tree made static.
 
 ifeq ($(CONFIG_CNSS_OUT_OF_TREE),y)
 ccflags-y += -I$(WLAN_PLATFORM_ROOT)/cnss_utils
