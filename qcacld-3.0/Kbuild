@@ -3474,7 +3474,7 @@ ccflags-y += -include $(WLAN_ROOT)/../../dataipa/config/dataipa_vendor.h
 ccflags-y += -D__ANDROID_COMMON_KERNEL__
 # Older MiCode base: labels whose gotos are compiled out (pmo ns offload)
 # trip -Wunused-label under CONFIG_WERROR.
-ccflags-y += -Wno-unused-label
+ccflags-y += -Wno-unused-label -Wno-unused-function
 
 # CFG80211_MLO_KEY_OPERATION_SUPPORT
 # Used to indicate the Linux Kernel contains support for ML key operation
