@@ -1,3 +1,11 @@
+include \
+	$(WLAN_PLATFORM_ROOT)/cnss2/sun_gki_defconfig \
+	$(WLAN_PLATFORM_ROOT)/cnss_genl/sun_gki_defconfig \
+	$(WLAN_PLATFORM_ROOT)/cnss_prealloc/sun_gki_defconfig \
+	$(WLAN_PLATFORM_ROOT)/cnss_utils/sun_gki_defconfig \
+	$(WLAN_PLATFORM_ROOT)/icnss2/sun_gki_defconfig
+
+
 ifeq ($(CONFIG_CNSS_OUT_OF_TREE),y)
 KBUILD_CPPFLAGS += -DCONFIG_CNSS_OUT_OF_TREE
 endif
@@ -30,6 +38,10 @@ endif
 # can be only compiled as a module from out-of-kernel-tree source.
 ifeq ($(CONFIG_WCNSS_MEM_PRE_ALLOC),m)
 KBUILD_CPPFLAGS += -DCONFIG_WCNSS_MEM_PRE_ALLOC
+endif
+
+ifeq ($(CONFIG_NOT_SET_PCI_DSTATE),y)
+KBUILD_CPPFLAGS += -DCONFIG_NOT_SET_PCI_DSTATE
 endif
 
 # CONFIG_CNSS_PLAT_IPC_QMI_SVC should never be "y" here since it
@@ -84,6 +96,16 @@ endif
 
 ifeq ($(CONFIG_SLATE_MODULE_ENABLED), y)
 KBUILD_CPPFLAGS += -DSLATE_MODULE_ENABLED
+endif
+
+ifeq ($(CONFIG_CNSS2_DISABLE_SSR_RAMDUMP), y)
+KBUILD_CPPFLAGS += -DCONFIG_CNSS2_DISABLE_SSR_RAMDUMP
+endif
+
+ifdef CONFIG_MHI_BUF_LEN
+KBUILD_CPPFLAGS += -DCONFIG_MHI_BUF_LEN=$(CONFIG_MHI_BUF_LEN)
+else
+KBUILD_CPPFLAGS += -DCONFIG_MHI_BUF_LEN=0x8000
 endif
 
 obj-$(CONFIG_CNSS2) += cnss2/
