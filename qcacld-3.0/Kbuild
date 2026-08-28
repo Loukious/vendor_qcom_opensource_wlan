@@ -6,6 +6,9 @@ else
 	KERNEL_BUILD := n
 endif
 
+# Force user build
+TARGET_BUILD_VARIANT := user
+
 ifeq ($(KERNEL_BUILD), y)
 	# These are provided in external module based builds
 	# Need to explicitly define for Kernel-based builds
@@ -24,7 +27,7 @@ WLAN_PROFILE ?= default
 CONFIG_QCA_CLD_WLAN_PROFILE ?= $(WLAN_PROFILE)
 DEVNAME ?= wlan
 WLAN_PLATFORM_INC ?= $(WLAN_ROOT)/../platform/inc
-DATA_IPA_INC ?= $(WLAN_ROOT)/../dataipa/drivers/platform/msm/include
+DATA_IPA_INC ?= $(WLAN_ROOT)/../../dataipa/drivers/platform/msm/include
 DATA_IPA_UAPI_INC ?= $(DATA_IPA_INC)/uapi
 
 ifeq ($(KERNEL_BUILD), n)
@@ -42,6 +45,13 @@ else ifneq ($(LINUX_BUILD_TOP),)
       override WLAN_FW_API := $(WLAN_ROOT)/../fw-api
 endif
 endif
+
+WLAN_PLATFORM_ROOT := $(WLAN_ROOT)/../platform
+include \
+	$(WLAN_PLATFORM_ROOT)/cnss2/sun_gki_defconfig \
+	$(WLAN_PLATFORM_ROOT)/cnss_genl/sun_gki_defconfig \
+	$(WLAN_PLATFORM_ROOT)/cnss_prealloc/sun_gki_defconfig \
+	$(WLAN_PLATFORM_ROOT)/cnss_utils/sun_gki_defconfig \
 
 include $(WLAN_ROOT)/configs/$(CONFIG_QCA_CLD_WLAN_PROFILE)_defconfig
 
@@ -3459,6 +3469,7 @@ INCS +=		$(COAP_WMI_INC)
 ccflags-y += $(INCS)
 
 ccflags-y += -include $(WLAN_ROOT)/configs/default_config.h
+ccflags-y += -include $(WLAN_ROOT)/../../dataipa/config/dataipa_vendor.h
 
 # CFG80211_MLO_KEY_OPERATION_SUPPORT
 # Used to indicate the Linux Kernel contains support for ML key operation

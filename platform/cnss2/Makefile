@@ -1,5 +1,6 @@
 # SPDX-License-Identifier: GPL-2.0-only
 
+include $(WLAN_PLATFORM_ROOT)/cnss2/sun_gki_defconfig
 # -Wmissing-prototypes dropped: this older MiCode base has non-static
 # functions (e.g. cnss_print_thread_trace) that the newer tree made static.
 
