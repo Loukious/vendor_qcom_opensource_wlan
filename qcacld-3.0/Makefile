@@ -104,7 +104,13 @@ all: $(KONOHA_EXTRA_SYMVERS)
 # Symbols from the tree builds that the Kono-Ha kernel symvers doesn't already
 # export, deduped by symbol name (first provider wins; the kernel's own
 # symvers is consulted first by modpost either way).
-$(KONOHA_EXTRA_SYMVERS): $(TREE_SYMVERS) $(PLATFORM_SYMVERS) $(DATAIPA_SYMVERS) $(ABI_OUT)/Module.symvers
+#
+# The prep runs in the recipe, not as a prerequisite: make evaluates the whole
+# prerequisite graph before running any recipe, so a $(ABI_OUT)/Module.symvers
+# prerequisite would abort with "No rule to make target" on a machine where
+# the konoha-abi cache doesn't exist yet (it is only ever created by the prep).
+$(KONOHA_EXTRA_SYMVERS): $(TREE_SYMVERS) $(PLATFORM_SYMVERS) $(DATAIPA_SYMVERS)
+	$(call konoha-ensure-prepared)
 	@mkdir -p "$(ABI_DIR)"
 	@echo "[konoha-abi] generating $(KONOHA_EXTRA_SYMVERS)"
 	@awk 'NR==FNR { k[$$2]=1; next } \
