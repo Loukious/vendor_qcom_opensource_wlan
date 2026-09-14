@@ -16,7 +16,9 @@
 #                    the built tree; set it explicitly when running from the
 #                    onyx-wlan fork checkout, which has different depth)
 #   KONOHA_SYMVERS   path to the Kono-Ha Module.symvers (downloaded if unset)
-#   SYMVERS_URL      override the release URL
+#   SYMVERS_URL      override the release URL (per-kernel-release symvers
+#                    assets; a URL change re-downloads even when a cached
+#                    Module.symvers is present -- see .symvers-url)
 #   CLANG_PATH       clang bin dir (default: /usr/lib/llvm-*/bin with PATH fallback)
 #
 # Idempotent: skips everything when the stamp file matches.
@@ -71,9 +73,24 @@ command -v perl >/dev/null 2>&1 || { echo "perl not found (needed for Makefile s
 # --- Module.symvers --------------------------------------------------------
 mkdir -p "$ABI_DIR"
 SYMVERS="${KONOHA_SYMVERS:-$ABI_DIR/Module.symvers}"
-if [[ ! -f "$SYMVERS" ]]; then
-	echo "[konoha-abi] fetching Kono-Ha Module.symvers"
+# (Re)fetch when the file is missing OR when it was cached from a different
+# URL. The stamp above already re-prepares everything when SYMVERS_URL
+# changes, but the cached file itself survived that path -- a persistent
+# workspace (crave) would silently build the module against stale symbols.
+# .symvers-url records where the current file came from. KONOHA_SYMVERS (an
+# explicit local file) is always taken as-is.
+cached_url="$(cat "$ABI_DIR/.symvers-url" 2>/dev/null || true)"
+if [[ ! -f "$SYMVERS" ]] || \
+		[[ -z "${KONOHA_SYMVERS:-}" && "$cached_url" != "$SYMVERS_URL" ]]; then
+	if [[ -n "$cached_url" && "$cached_url" != "$SYMVERS_URL" ]]; then
+		echo "[konoha-abi] cached Module.symvers is from a different URL -- re-fetching"
+		echo "[konoha-abi]   cached: $cached_url"
+		echo "[konoha-abi]   wanted: $SYMVERS_URL"
+	else
+		echo "[konoha-abi] fetching Kono-Ha Module.symvers"
+	fi
 	curl -fL --retry 3 "$SYMVERS_URL" -o "$SYMVERS"
+	printf '%s\n' "$SYMVERS_URL" > "$ABI_DIR/.symvers-url"
 	if curl -fsL --retry 3 "$SYMVERS_SHA256_URL" -o "$SYMVERS.sha256" 2>/dev/null; then
 		(cd "$ABI_DIR" && sha256sum -c "$(basename "$SYMVERS").sha256" >/dev/null)
 	fi
