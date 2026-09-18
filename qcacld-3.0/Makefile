@@ -160,7 +160,7 @@ define konoha-ensure-prepared
 		echo "       (wlan/platform must be built before qcacld-3.0)" >&2; exit 1; \
 	fi
 	@rel_prev=$$(cat "$(BUILT_RELEASE_STAMP)" 2>/dev/null); \
-	KONOHA_ABI_DIR="$(ABI_DIR)" bash "$(PREP_SH)" || exit $$?; \
+	KONOHA_ABI_DIR="$(ABI_DIR)" bash "$(PREP_SH)" --check-only || exit $$?; \
 	rel_now=$$(cat "$(ABI_OUT)/include/config/kernel.release"); \
 	if [ -n "$$rel_prev" ] && [ "$$rel_prev" != "$$rel_now" ]; then \
 		echo "[konoha-abi] kernel release changed ($$rel_prev -> $$rel_now); cleaning module objects"; \

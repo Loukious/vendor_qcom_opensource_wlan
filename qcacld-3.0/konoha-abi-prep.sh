@@ -20,9 +20,17 @@
 #                    assets; a URL change re-downloads even when a cached
 #                    Module.symvers is present -- see .symvers-url)
 #   CLANG_PATH       clang bin dir (default: /usr/lib/llvm-*/bin with PATH fallback)
+#   --check-only     validate prepared cache offline (used by the ROM Makefile)
 #
 # Idempotent: skips everything when the stamp file matches.
 set -euo pipefail
+
+CHECK_ONLY=0
+case "${1:-}" in
+    '') ;;
+    --check-only) CHECK_ONLY=1 ;;
+    *) echo "Usage: $0 [--check-only]" >&2; exit 1 ;;
+esac
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 WLAN_DIR="$(cd "$SCRIPT_DIR/.." && pwd)"
@@ -41,6 +49,14 @@ KERNEL_SOURCE_REPO="${KERNEL_SOURCE_REPO:-https://github.com/MiCode/Xiaomi_Kerne
 KERNEL_SOURCE_BRANCH="${KERNEL_SOURCE_BRANCH:-onyx-v-oss}"
 KONOHA_KERNEL_RELEASE="${KONOHA_KERNEL_RELEASE:-6.6.57-android15-8-4k}"
 SYMVERS_URL="${SYMVERS_URL:-https://github.com/Loukious/konoha-kernel-gki/releases/download/wlan-kernel-symbols/Module.symvers}"
+# File-based pin survives Android's ninja environment filtering. Do not source
+# shell code here: this is one literal URL written by the pre-build recipe.
+if [[ -s "$ABI_DIR/.symvers-pin" ]]; then
+	SYMVERS_URL="$(cat "$ABI_DIR/.symvers-pin")"
+elif [[ "$CHECK_ONLY" == 1 ]]; then
+	echo "FATAL: missing ABI release pin; run CI ABI preparation before mka" >&2
+	exit 1
+fi
 SYMVERS_SHA256_URL="${SYMVERS_URL}.sha256"
 
 KERNEL_DEVICE="${KERNEL_SOURCE_BRANCH%%-*}"   # onyx
@@ -49,15 +65,26 @@ BASE_VERSION="${KONOHA_KERNEL_RELEASE%%-*}"   # 6.6.57
 IFS=. read -r KERNEL_VERSION KERNEL_PATCHLEVEL KERNEL_SUBLEVEL <<< "$BASE_VERSION"
 
 STAMP_PAYLOAD="$KERNEL_SOURCE_REPO $KERNEL_SOURCE_BRANCH $KONOHA_KERNEL_RELEASE $SYMVERS_URL"
+cache_ok() {
+	[[ -f "$STAMP" && "$(cat "$STAMP")" == "$STAMP_PAYLOAD" \
+		&& -d "$SRC_DIR" && -s "$OUT_DIR/Module.symvers" \
+		&& -f "$OUT_DIR/include/config/kernel.release" \
+		&& "$(cat "$OUT_DIR/include/config/kernel.release")" == "$KONOHA_KERNEL_RELEASE" \
+		&& -s "$ABI_DIR/.prepared-symvers-sha256" ]] || return 1
+	[[ "$(sha256sum "$OUT_DIR/Module.symvers")" == "$(cat "$ABI_DIR/.prepared-symvers-sha256")" ]]
+}
 
 # Idempotent: skips everything when the stamp file matches AND the prepared
 # output is still intact (the stamp alone is not enough -- out/ may have been
 # removed since).
-if [[ -f "$STAMP" && "$(cat "$STAMP")" == "$STAMP_PAYLOAD" \
-	&& -f "$OUT_DIR/include/config/kernel.release" && -s "$OUT_DIR/Module.symvers" ]]; then
+if cache_ok; then
 	echo "[konoha-abi] already prepared: $ABI_DIR"
 	echo "[konoha-abi] kernel release: $(cat "$OUT_DIR/include/config/kernel.release")"
 	exit 0
+fi
+if [[ "$CHECK_ONLY" == 1 ]]; then
+	echo "FATAL: ABI cache missing, stale or corrupt; prepare it before mka (no downloads during compilation)" >&2
+	exit 1
 fi
 
 # --- toolchain -------------------------------------------------------------
@@ -89,13 +116,21 @@ if [[ ! -f "$SYMVERS" ]] || \
 	else
 		echo "[konoha-abi] fetching Kono-Ha Module.symvers"
 	fi
-	curl -fL --retry 3 "$SYMVERS_URL" -o "$SYMVERS"
+	# Verify in scratch before replacing a previously good cached file.
+	tmp_symvers="$(mktemp -d "$ABI_DIR/.symvers-download.XXXXXX")"
+	trap 'rm -rf "$tmp_symvers"' EXIT
+	curl -fL --retry 3 "$SYMVERS_URL" -o "$tmp_symvers/Module.symvers"
+	curl -fsL --retry 3 "$SYMVERS_SHA256_URL" -o "$tmp_symvers/Module.symvers.sha256"
+	(cd "$tmp_symvers" && sha256sum -c Module.symvers.sha256)
+	mv "$tmp_symvers/Module.symvers" "$SYMVERS"
+	mv "$tmp_symvers/Module.symvers.sha256" "$SYMVERS.sha256"
 	printf '%s\n' "$SYMVERS_URL" > "$ABI_DIR/.symvers-url"
-	if curl -fsL --retry 3 "$SYMVERS_SHA256_URL" -o "$SYMVERS.sha256" 2>/dev/null; then
-		(cd "$ABI_DIR" && sha256sum -c "$(basename "$SYMVERS").sha256" >/dev/null)
-	fi
 fi
 [[ -s "$SYMVERS" ]] || { echo "Module.symvers is missing or empty" >&2; exit 1; }
+if [[ -z "${KONOHA_SYMVERS:-}" ]]; then
+	[[ -s "$SYMVERS.sha256" ]] || { echo "Missing Module.symvers checksum" >&2; exit 1; }
+	(cd "$ABI_DIR" && sha256sum -c "$(basename "$SYMVERS").sha256")
+fi
 
 # --- source ----------------------------------------------------------------
 if [[ ! -d "$SRC_DIR/.git" ]]; then
@@ -153,4 +188,5 @@ if [[ "$kernel_release" != "$KONOHA_KERNEL_RELEASE" ]]; then
 fi
 
 printf '%s' "$STAMP_PAYLOAD" > "$STAMP"
+sha256sum "$OUT_DIR/Module.symvers" > "$ABI_DIR/.prepared-symvers-sha256"
 echo "[konoha-abi] prepared: $ABI_DIR (release $kernel_release)"
