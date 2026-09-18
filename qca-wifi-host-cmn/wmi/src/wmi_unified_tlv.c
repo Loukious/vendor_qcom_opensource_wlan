@@ -13520,6 +13520,13 @@ QDF_STATUS save_service_bitmap_tlv(wmi_unified_t wmi_handle, void *evt_buf,
 	qdf_mem_copy(soc->wmi_service_bitmap,
 			param_buf->wmi_service_bitmap,
 			(WMI_SERVICE_BM_SIZE * sizeof(uint32_t)));
+	{
+		uint32_t word;
+
+		for (word = 0; word < WMI_SERVICE_BM_SIZE; word++)
+			wmi_err("CFRDIAG service_bitmap[%u]=0x%08x", word,
+				soc->wmi_service_bitmap[word]);
+	}
 
 	if (bitmap_buf)
 		qdf_mem_copy(bitmap_buf,
@@ -13564,7 +13571,7 @@ QDF_STATUS save_ext_service_bitmap_tlv(wmi_unified_t wmi_handle, void *evt_buf,
 			ev->wmi_service_segment_bitmap,
 			(WMI_SERVICE_SEGMENT_BM_SIZE32 * sizeof(uint32_t)));
 
-	wmi_debug("wmi_ext_service_bitmap 0:0x%x, 1:0x%x, 2:0x%x, 3:0x%x",
+	wmi_err("CFRDIAG wmi_ext_service_bitmap 0:0x%x, 1:0x%x, 2:0x%x, 3:0x%x",
 		 soc->wmi_ext_service_bitmap[0], soc->wmi_ext_service_bitmap[1],
 		 soc->wmi_ext_service_bitmap[2], soc->wmi_ext_service_bitmap[3]);
 
@@ -13601,7 +13608,7 @@ QDF_STATUS save_ext_service_bitmap_tlv(wmi_unified_t wmi_handle, void *evt_buf,
 		      sizeof(uint32_t)));
 
 	for (i = 0; i < param_buf->num_wmi_service_ext_bitmap; i++) {
-		wmi_debug("wmi_ext2_service_bitmap %u:0x%x",
+		wmi_err("CFRDIAG wmi_ext2_service_bitmap %u:0x%x",
 			 i, soc->wmi_ext2_service_bitmap[i]);
 	}
 
@@ -15404,6 +15411,8 @@ static QDF_STATUS extract_service_ready_ext_tlv(wmi_unified_t wmi_handle,
 	param->max_bssid_rx_filters = ev->max_bssid_rx_filters;
 	param->fw_build_vers_ext = ev->fw_build_vers_ext;
 	param->num_dbr_ring_caps = param_buf->num_dma_ring_caps;
+	wmi_err("CFRDIAG SERVICE_READY_EXT parsed DMA count=%u",
+		param->num_dbr_ring_caps);
 	param->num_bin_scaling_params = param_buf->num_wmi_bin_scaling_params;
 	param->max_bssid_indicator = ev->max_bssid_indicator;
 	qdf_mem_copy(&param->ppet, &ev->ppet, sizeof(param->ppet));
@@ -15642,6 +15651,8 @@ extract_service_ready_ext2_tlv(wmi_unified_t wmi_handle, uint8_t *event,
 	param->chwidth_num_peer_caps = ev->chwidth_num_peer_caps;
 
 	param->num_dbr_ring_caps = param_buf->num_dma_ring_caps;
+	wmi_err("CFRDIAG SERVICE_READY_EXT2 parsed DMA count=%u",
+		param->num_dbr_ring_caps);
 
 	param->num_msdu_idx_qtype_map =
 				param_buf->num_htt_msdu_idx_to_qtype_map;
@@ -16328,6 +16339,10 @@ populate_dbr_ring_cap_elems(wmi_unified_t wmi_handle,
 	param->ring_elems_min = dbr_ring_caps->ring_elems_min;
 	param->min_buf_size = dbr_ring_caps->min_buf_size;
 	param->min_buf_align = dbr_ring_caps->min_buf_align;
+	wmi_err("CFRDIAG DMA cap raw_pdev=%u host_pdev=%u module=%u elems=%u size=%u align=%u",
+		dbr_ring_caps->pdev_id, param->pdev_id, param->mod_id,
+		param->ring_elems_min, param->min_buf_size,
+		param->min_buf_align);
 }
 
 static QDF_STATUS extract_dbr_ring_cap_service_ready_ext_tlv(

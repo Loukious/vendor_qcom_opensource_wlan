@@ -426,7 +426,7 @@ int init_deinit_populate_dbr_ring_cap(struct wlan_objmgr_psoc *psoc,
 	QDF_STATUS status = QDF_STATUS_SUCCESS;
 
 	num_dbr_ring_caps = info->service_ext_param.num_dbr_ring_caps;
-	target_if_debug("Num DMA Capabilities = %d", num_dbr_ring_caps);
+	target_if_err("CFRDIAG SERVICE_READY_EXT DMA capabilities=%u", num_dbr_ring_caps);
 
 	if (!num_dbr_ring_caps)
 		return 0;
@@ -479,7 +479,7 @@ int init_deinit_populate_dbr_ring_cap_ext2(struct wlan_objmgr_psoc *psoc,
 	}
 
 	num_dbr_ring_caps = info->service_ext2_param.num_dbr_ring_caps;
-	target_if_debug("Num DMA Capabilities = %d", num_dbr_ring_caps);
+	target_if_err("CFRDIAG SERVICE_READY_EXT2 DMA capabilities=%u", num_dbr_ring_caps);
 
 	if (!num_dbr_ring_caps)
 		return 0;

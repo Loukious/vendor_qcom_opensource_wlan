@@ -504,6 +504,10 @@ static QDF_STATUS target_if_cfr_init_target(struct wlan_objmgr_psoc *psoc,
 
 	cfr_capable = wmi_service_enabled(wmi_handle,
 					  wmi_service_cfr_capture_support);
+	cfr_err("CFRDIAG target=%u object_pdev=%u capture_service=%u soc_pdev_service=%u",
+		target, wlan_objmgr_pdev_get_pdev_id(pdev), cfr_capable,
+		wmi_service_enabled(wmi_handle,
+				    wmi_service_cfr_capture_pdev_id_soc));
 	cfr_pdev->is_cfr_capable = cfr_capable;
 	cfr_psoc->is_cfr_capable = cfr_capable;
 	if (!cfr_capable) {

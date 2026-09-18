@@ -107,8 +107,20 @@ static QDF_STATUS populate_dbr_cap_mod_param(struct wlan_objmgr_pdev *pdev,
 	num_dbr_ring_caps = target_psoc_get_num_dbr_ring_caps(tgt_psoc_info);
 	dbr_ring_cap = target_psoc_get_dbr_ring_caps(tgt_psoc_info);
 	pdev_id = mod_param->pdev_id;
+	direct_buf_rx_err("CFRDIAG lookup object_pdev=%u lookup_pdev=%u module=%u srng=%u rings=%u ext_count=%u ext2_count=%u selected_count=%u table=%pK",
+		wlan_objmgr_pdev_get_pdev_id(pdev), pdev_id, mod_id,
+		mod_param->srng_id, DBR_SRNG_NUM,
+		tgt_psoc_info->info.service_ext_param.num_dbr_ring_caps,
+		tgt_psoc_info->info.service_ext2_param.num_dbr_ring_caps,
+		num_dbr_ring_caps, dbr_ring_cap);
 
 	for (cap_idx = 0; cap_idx < num_dbr_ring_caps; cap_idx++) {
+		direct_buf_rx_err("CFRDIAG cap[%u] host_pdev=%u module=%u elems=%u size=%u align=%u",
+			cap_idx, dbr_ring_cap[cap_idx].pdev_id,
+			dbr_ring_cap[cap_idx].mod_id,
+			dbr_ring_cap[cap_idx].ring_elems_min,
+			dbr_ring_cap[cap_idx].min_buf_size,
+			dbr_ring_cap[cap_idx].min_buf_align);
 		if (dbr_ring_cap[cap_idx].pdev_id == pdev_id) {
 			if (dbr_ring_cap[cap_idx].mod_id == mod_id) {
 				mod_param->dbr_ring_cap->ring_elems_min =
@@ -1783,6 +1795,9 @@ QDF_STATUS target_if_direct_buf_rx_module_register(
 		status = target_if_init_dbr_ring(pdev, dbr_pdev_obj,
 						 (enum DBR_MODULE)mod_id,
 						 srng_id);
+		direct_buf_rx_err("CFRDIAG register module=%u srng=%u mapped_pdev=%u status=%u initialized=%u",
+			mod_id, srng_id, mod_param->pdev_id, status,
+			mod_param->srng_initialized);
 		if (QDF_IS_STATUS_ERROR(status))
 			direct_buf_rx_err("init dbr ring fail, srng_id %d, status %d",
 					  srng_id, status);
