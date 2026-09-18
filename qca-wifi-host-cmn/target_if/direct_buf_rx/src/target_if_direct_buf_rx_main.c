@@ -1738,6 +1738,31 @@ dbr_srng_init_failed:
 	return status;
 }
 
+static bool target_if_dbr_ring_advertised(struct wlan_objmgr_pdev *pdev,
+					uint8_t mod_id, uint8_t srng_id)
+{
+	struct target_psoc_info *info;
+	struct wlan_psoc_host_dbr_ring_caps *caps;
+	uint32_t i, count, pdev_id;
+
+	info = wlan_psoc_get_tgt_if_handle(wlan_pdev_get_psoc(pdev));
+	if (!info)
+		return false;
+
+	count = target_psoc_get_num_dbr_ring_caps(info);
+	caps = target_psoc_get_dbr_ring_caps(info);
+	if (!caps)
+		return false;
+
+	pdev_id = dbr_get_pdev_id(srng_id,
+				wlan_objmgr_pdev_get_pdev_id(pdev));
+	for (i = 0; i < count; i++)
+		if (caps[i].pdev_id == pdev_id && caps[i].mod_id == mod_id)
+			return true;
+
+	return false;
+}
+
 QDF_STATUS target_if_direct_buf_rx_module_register(
 			struct wlan_objmgr_pdev *pdev, uint8_t mod_id,
 			struct dbr_module_config *dbr_config,
@@ -1750,6 +1775,7 @@ QDF_STATUS target_if_direct_buf_rx_module_register(
 	struct dbr_module_config *config = NULL;
 	struct direct_buf_rx_module_param *mod_param;
 	uint8_t srng_id;
+	bool registered = false;
 
 	if (!pdev) {
 		direct_buf_rx_err("pdev context passed is null");
@@ -1787,6 +1813,12 @@ QDF_STATUS target_if_direct_buf_rx_module_register(
 	}
 
 	for (srng_id = 0; srng_id < DBR_SRNG_NUM; srng_id++) {
+		/* Ring slots are a host maximum, not firmware capabilities. */
+		if (!target_if_dbr_ring_advertised(pdev, mod_id, srng_id)) {
+			direct_buf_rx_err("CFRDIAG skip unadvertised module=%u srng=%u",
+					  mod_id, srng_id);
+			continue;
+		}
 		mod_param = &dbr_pdev_obj->dbr_mod_param[mod_id][srng_id];
 		config = &mod_param->dbr_config;
 		mod_param->dbr_rsp_handler = dbr_rsp_handler;
@@ -1798,18 +1830,30 @@ QDF_STATUS target_if_direct_buf_rx_module_register(
 		direct_buf_rx_err("CFRDIAG register module=%u srng=%u mapped_pdev=%u status=%u initialized=%u",
 			mod_id, srng_id, mod_param->pdev_id, status,
 			mod_param->srng_initialized);
-		if (QDF_IS_STATUS_ERROR(status))
+		if (QDF_IS_STATUS_ERROR(status)) {
 			direct_buf_rx_err("init dbr ring fail, srng_id %d, status %d",
 					  srng_id, status);
+			goto unwind;
+		}
+		registered = true;
 	}
 
+	return registered ? QDF_STATUS_SUCCESS : QDF_STATUS_E_NOSUPPORT;
+
+unwind:
+	while (srng_id > 0) {
+		srng_id--;
+		if (dbr_pdev_obj->dbr_mod_param[mod_id][srng_id].srng_initialized)
+			target_if_deinit_dbr_ring(pdev, dbr_pdev_obj,
+						mod_id, srng_id);
+	}
 	return status;
 }
 
 QDF_STATUS target_if_direct_buf_rx_module_unregister(
 			struct wlan_objmgr_pdev *pdev, uint8_t mod_id)
 {
-	QDF_STATUS status;
+	QDF_STATUS status = QDF_STATUS_SUCCESS;
 	struct direct_buf_rx_pdev_obj *dbr_pdev_obj;
 	uint8_t srng_id;
 
@@ -1845,6 +1889,8 @@ QDF_STATUS target_if_direct_buf_rx_module_unregister(
 	}
 
 	for (srng_id = 0; srng_id < DBR_SRNG_NUM; srng_id++) {
+		if (!dbr_pdev_obj->dbr_mod_param[mod_id][srng_id].srng_initialized)
+			continue;
 		status = target_if_deinit_dbr_ring(pdev, dbr_pdev_obj,
 						   mod_id, srng_id);
 		direct_buf_rx_info("status %d", status);
