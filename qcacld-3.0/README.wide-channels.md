@@ -84,34 +84,38 @@ These results establish configuration and scan-path acceptance, but a
 6 GHz AP connection has not been tested.
 
 The installed firmware reports the 5.9 GHz service absent, but its rules
-cover channels 169/173/177. Direct passive scan tests initially failed while
-those frequencies were absent from the firmware scan table. After a
-temporary table update, all three scans completed and returned channel
-statistics. The normal table was restored after the test.
+cover channels 169/173/177. Native passive scans initially failed while
+those frequencies were absent from the firmware scan table. Supplying
+those channels made the scans complete. Subsequent native active scans
+with wildcard probes on all three channels also completed with nonzero
+firmware transmit statistics, matching the channel-165 control. Normal
+country processing restored the full table after each diagnostic test.
 
-The compiled client lab profile therefore retains otherwise permitted
-5.9 GHz channels as passive (NO_IR) when regulatory data is offloaded and
-the current pair is FCC15_FCCA. It does not revive channels excluded by
-firmware rules, RF range, band selection, indoor policy or NOL. It preserves
-power/bandwidth/other flags, does not grant master mode even if that INI is
-enabled, and leaves the firmware capability bit unchanged. Ordinary profiles
-and targets with the capability present keep their existing behavior.
-This does not modify signed firmware or board data. Passive scanning is
-verified; association, transmission and CSI on these channels still need
-a compatible access point test. After installing the rebuilt module,
-ordinary iw passive scans at 5845/5865/5885 MHz all visited the requested
-frequency, returned statistics and completed. Framework US/GB updates and
-clearing the override preserve 14 enabled 2.4 GHz channels, 28 enabled
-5 GHz channels (169/173/177 passive), and 59 standard 6 GHz channels.
-Return probes still report the 5.9 GHz firmware capability as absent.
-ASUS 5260 MHz internet and app capture regression passed: 130 supported
-HE/VHT80 records in the ten-second recording window, none unsupported.
-Evidence is in
-/home/loukious/Android/mowa-cfr/5dot9-investigation-20261009.
+The compiled client lab profile therefore retains the already filtered
+firmware channel list for 5.9 GHz when regulatory data is offloaded,
+the current pair is FCC15_FCCA and the firmware service bit is absent.
+It adds no passive-only restriction. Firmware rules, RF-range, band,
+indoor, NOL and later bandwidth exclusions remain intact; existing flags,
+power and bandwidth are not cleared or increased. The firmware capability
+bit stays unchanged. Ordinary profiles and targets with the capability
+present keep their existing behavior. No signed firmware or board data
+is modified. After flashing, ordinary active iw scans on all three channels
+completed with transmit statistics; framework country updates retain them
+without NO_IR along with channel 14 and all 59 standard 6 GHz channels.
+Local-only AP startup at 20 MHz also succeeds at all three requested
+frequencies. With the companion hostapd AIDL secondary-channel fix,
+all three also start at 80 MHz, centered at 5855 MHz. That source is in
+Loukious/android_external_wpa_supplicant_8, branch mowa-5dot9-hotspot-20261009;
+the compiled KSU module mowa-hostapd-5dot9 is installed and its mount
+verified after reboot. Association, peer data traffic and CSI on these channels
+still require a compatible second device test. Active scan completion and
+firmware transmit statistics do not independently verify reception or
+all channel widths/rates. Evidence is in
+/home/loukious/Android/mowa-cfr/active-5dot9-20261009.
 The special lower 6 GHz edge channel (5935 MHz, channel 2) is also gated
 by its separate firmware service capability and remains disabled.
 
-Run the passive 5.9 GHz filter tests with:
+Run the 5.9 GHz filter tests with:
 
     python3 qcacld-3.0/tests/test-wide-5dot9.py
 

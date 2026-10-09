@@ -48,7 +48,6 @@ static bool reg_is_disabling_5dot9_needed(struct wlan_objmgr_psoc *p) {
 }
 static bool reg_is_5dot9_ghz_chan_allowed_master_mode(struct wlan_objmgr_pdev *p) { return master; }
 static bool reg_is_5dot9_ghz_freq(struct wlan_objmgr_pdev *p, unsigned f) { return f>=5845 && f<=5885; }
-static bool reg_is_state_allowed(unsigned s) { return s==CHANNEL_STATE_ENABLE || s==CHANNEL_STATE_DFS; }
 '''
 tests = r'''
 int main(void) {
@@ -78,11 +77,10 @@ int main(void) {
   for(int i=1;i<NUM_CHANNELS;i++) {
    if(i==4)continue;
    struct regulatory_channel expected=before[i];
-   if(fcc) {
-    if(reg_is_disabling_5dot9_needed(&psoc) && !fallback) {
+   if(fcc && !fallback) {
+    if(reg_is_disabling_5dot9_needed(&psoc)) {
      expected.state=CHANNEL_STATE_DISABLE;expected.chan_flags=REGULATORY_CHAN_DISABLED;
-    } else if((!master || fallback) && !(expected.chan_flags&REGULATORY_CHAN_DISABLED)
-              && (!fallback || reg_is_state_allowed(expected.state))) {
+    } else if(!master && !(expected.chan_flags&REGULATORY_CHAN_DISABLED)) {
      expected.state=CHANNEL_STATE_DFS;expected.chan_flags|=REGULATORY_CHAN_NO_IR;
     }
    }
@@ -90,7 +88,7 @@ int main(void) {
   }
   assert(capability==bit); /* Never forge firmware capability. */
  }
- puts("64 cases: passive-only fallback, native behavior, excluded channels, limits/flags and option-off: OK");
+ puts("64 cases: active lab fallback, native behavior, prior states/flags/limits and option-off: OK");
 }
 '''
 with tempfile.TemporaryDirectory() as directory:
