@@ -60,7 +60,7 @@ prefix = r'''
 #include <errno.h>
 #include <stdlib.h>
 #define __REG_DB_H
-enum { FCC8_WORLD = 0x09, FCC1_6G_09 = 0x09, MKKA = 0, FCC8 = 1 };
+enum { FCC15_FCCA = 0xea, FCC1_6G_18 = 0x18, MKKA = 0, FCC8 = 1 };
 #include "reg_channel_profile.h"
 typedef int QDF_STATUS;
 typedef void *wmi_unified_t;
@@ -138,14 +138,18 @@ tests = r'''
 #ifdef CONFIG_WLAN_WIDE_CHANNELS
 static struct cur_regulatory_info event(struct wlan_objmgr_psoc *psoc, uint8_t phy) {
     struct cur_reg_rule *rules=qdf_mem_malloc(sizeof(*rules));
-    *rules=(struct cur_reg_rule){2402,2482,40,20,0,0};
-    return (struct cur_regulatory_info){.reg_dmn_pair=0x09,.num_2g_reg_rules=1,
+    *rules=(struct cur_reg_rule){2402,2472,40,20,0,0};
+    return (struct cur_regulatory_info){.reg_dmn_pair=0xea,.num_2g_reg_rules=1,
         .num_5g_reg_rules=5,.reg_rules_2g_ptr=rules,.psoc=psoc,.phy_id=phy,.dfs_region=2};
 }
 static void channel14_tests(struct wlan_objmgr_psoc *psoc) {
     tgt_if_reset_channel14_profile(psoc);
     struct cur_regulatory_info info=event(psoc,0);
     struct cur_reg_rule *original=info.reg_rules_2g_ptr;
+    info.reg_dmn_pair=0x09;
+    assert(tgt_if_apply_channel14_profile(&info)==0 && ctl_calls==0);
+    assert(info.reg_rules_2g_ptr==original && original[0].end_freq==2472);
+    info.reg_dmn_pair=0xea;
     info.status_code=5;
     assert(tgt_if_apply_channel14_profile(&info)==0 && ctl_calls==0);
     info.status_code=0; have_caps=0;
@@ -165,10 +169,11 @@ static void channel14_tests(struct wlan_objmgr_psoc *psoc) {
     assert(tgt_if_apply_channel14_profile(&info)==3);
     assert(info.reg_rules_2g_ptr==original && info.num_2g_reg_rules==1);
     assert(live_allocations==1 && !soc_reg.wide_channel14_ctl_sent[0]);
+    assert(original[0].end_freq==2472);
     ctl_result=0; int calls=ctl_calls;
     assert(tgt_if_apply_channel14_profile(&info)==0 && ctl_calls==calls+1);
     assert(sent_ctl.currentRD2G==0x0a40 && sent_ctl.currentRD5G==0x0810);
-    assert(sent_ctl.currentRDinuse==0x09 && sent_ctl.ctl_2G==0x40 && sent_ctl.ctl_5G==0x10);
+    assert(sent_ctl.currentRDinuse==0xea && sent_ctl.ctl_2G==0x40 && sent_ctl.ctl_5G==0x10);
     assert(sent_ctl.dfsDomain==2 && sent_ctl.pdev_id==7);
     assert(info.num_2g_reg_rules==2 && live_allocations==1);
     assert(info.reg_rules_2g_ptr[0].start_freq==2402 && info.reg_rules_2g_ptr[0].end_freq==2482);
@@ -208,9 +213,9 @@ int main(void) {
     assert(c.pdev_id == 0xff && !memcmp(c.country, "TN", 3));
 #ifdef CONFIG_WLAN_WIDE_CHANNELS
     assert(user_calls == 1 && legacy_calls == 0 && sent_pdev == 0xff);
-    assert(sent_rd.flags == REGDMN_IS_SET && sent_rd.cc.regdmn.reg_2g_5g_pair_id == 0x09);
+    assert(sent_rd.flags == REGDMN_IS_SET && sent_rd.cc.regdmn.reg_2g_5g_pair_id == 0xea);
 #ifdef CONFIG_BAND_6GHZ
-    assert(sent_rd.cc.regdmn.sixg_superdmn_id == 0x09);
+    assert(sent_rd.cc.regdmn.sixg_superdmn_id == 0x18);
 #else
     assert(sent_rd.cc.regdmn.sixg_superdmn_id == 0);
 #endif
@@ -222,7 +227,7 @@ int main(void) {
     assert(!memcmp(&requested, &before, sizeof(before)) && sent_pdev == 7);
     assert(release_calls == 1);
 #ifdef CONFIG_WLAN_WIDE_CHANNELS
-    assert(sent_rd.flags == REGDMN_IS_SET && sent_rd.cc.regdmn.reg_2g_5g_pair_id == 0x09);
+    assert(sent_rd.flags == REGDMN_IS_SET && sent_rd.cc.regdmn.reg_2g_5g_pair_id == 0xea);
 #else
     assert(!memcmp(&sent_rd, &requested, sizeof(requested)));
 #endif
@@ -231,7 +236,7 @@ int main(void) {
         assert(tgt_if_regulatory_set_user_country_code(&psoc, 0, &requested)==0);
         assert(!memcmp(&requested, &before, sizeof(before)));
 #ifdef CONFIG_WLAN_WIDE_CHANNELS
-        assert(sent_rd.flags==REGDMN_IS_SET && sent_rd.cc.regdmn.reg_2g_5g_pair_id==0x09);
+        assert(sent_rd.flags==REGDMN_IS_SET && sent_rd.cc.regdmn.reg_2g_5g_pair_id==0xea);
 #endif
     }
     int previous=release_calls, calls=user_calls;
@@ -271,7 +276,7 @@ int main(void) {
     struct cur_reg_rule five[]={{5250,5330,80,30,6,0x123},{5490,5730,160,10,0,0x321},{5945,7125,320,30,0,8}};
     struct cur_reg_rule two_before[2], five_before[3];
     memcpy(two_before,two,sizeof(two)); memcpy(five_before,five,sizeof(five));
-    struct cur_regulatory_info info={.reg_dmn_pair=0x09,.num_2g_reg_rules=2,
+    struct cur_regulatory_info info={.reg_dmn_pair=0xea,.num_2g_reg_rules=2,
         .num_5g_reg_rules=3,.reg_rules_2g_ptr=two,.reg_rules_5g_ptr=five};
     reg_cap_channel_profile_power(&info);
     struct wlan_mlme_generic gen={3,3};
@@ -299,14 +304,14 @@ int main(void) {
     assert(!memcmp(two,two_before,sizeof(two)) && !memcmp(five,five_before,sizeof(five)));
     info.reg_dmn_pair=0x30; two[0].reg_power=30;
     reg_cap_channel_profile_power(&info); assert(two[0].reg_power==30);
-    info.reg_dmn_pair=0x09; info.reg_rules_2g_ptr=NULL; info.reg_rules_5g_ptr=NULL;
+    info.reg_dmn_pair=0xea; info.reg_rules_2g_ptr=NULL; info.reg_rules_5g_ptr=NULL;
     reg_cap_channel_profile_power(&info);
     puts("startup, country/domain updates, error propagation, references, power and feature-off checks: OK");
 }
 '''
 
-assert re.search(r'FCC8_WORLD\s*=\s*0x09', (CORE / 'reg_db.h').read_text())
-assert re.search(r'FCC1_6G_09\s*=\s*0x09', (CORE / 'reg_db.h').read_text())
+assert re.search(r'FCC15_FCCA\s*=\s*0xEA', (CORE / 'reg_db.h').read_text())
+assert re.search(r'FCC1_6G_18\s*=\s*0x18', (CORE / 'reg_db.h').read_text())
 assert TARGET.read_text().count('reg_cap_channel_profile_power(reg_info);') == 2
 mlme = ROOT / 'qcacld-3.0/components/mlme/core/src/wlan_mlme_main.c'
 scan = ROOT / 'qca-wifi-host-cmn/umac/scan/dispatcher/src/wlan_scan_ucfg_api.c'
@@ -338,7 +343,8 @@ with tempfile.TemporaryDirectory() as directory:
 
 db = (CORE / 'reg_db.c').read_text()
 assert '{FCC8_WORLD, FCC8, WORLD}' in db
-assert '{FCC8_WORLD, FCC8, MKKA}' in db
+assert '{FCC15_FCCA, FCC8, MKKA}' in db
+assert '{FCC15_FCCA, FCC15, FCCA}' in db
 assert re.search(r'\[MKKA\]\s*=\s*0x0A40', db)
 assert re.search(r'\[FCC8\]\s*=\s*0x0810', db)
 domain = re.search(r'\[FCC8\]\s*=.*?\{(CHAN_.*?)\}\s*\}', db, re.S).group(1)
@@ -378,10 +384,10 @@ for channel in range(1, 234, 4):
         sixg_split_channels.append(channel)
 assert sixg_split_channels == [185]
 report = {'source_tests': 'passed with feature disabled and enabled with/without 6 GHz',
-          'profile': 'FCC8_WORLD (0x09)', 'database_5ghz_channels': channels,
-          'rules': rules, 'firmware_acceptance': 'not tested; phone has original module',
+          'profile': 'FCC15_FCCA (0xea)', 'database_5ghz_channels': channels,
+          'rules': rules, 'firmware_acceptance': 'matching pair returned rules in native tests; built driver not tested by this source test',
           'channel14': '802.11b-only rule, subject to firmware RF range and per-band command acceptance',
-          'sixg_superdomain': 'FCC1_6G_09 (0x09)',
+          'sixg_superdomain': 'FCC1_6G_18 (0x18)',
           'database_6ghz_20mhz_channels': sixg_channels,
           'database_6ghz_split_rule_channels': sixg_split_channels,
           'sixg_rule_boundary_note': 'Channel 185 straddles the 6875 MHz power/PSD boundary; firmware rules determine usability',

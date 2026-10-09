@@ -7,20 +7,26 @@ firmware restart, using local requests without overwriting caller arguments.
 
 The profile requests all three bands:
 
-- Firmware FCC8_WORLD (0x09) supplies channels 1–13 and 5 GHz channels
-  36–64, 100–144 and 149–177.
+- Firmware FCC15_FCCA (0xea) and FCC1_6G_18 (0x18) form the matching
+  pair in this handset's installed firmware database. Native WMI tests
+  returned 6 GHz AP/client rules for this combination, including the
+  5925–7125 MHz LPI client rule. FCC8_WORLD (0x09) with super-domain 0x09
+  or 0x18 returned no 6 GHz rules. The older host US entry uses different
+  identifiers and must not be substituted for the observed firmware pair.
 - Channel 14 uses WMI_PDEV_SET_REGDOMAIN_CMDID to request MKKA on 2.4 GHz
   and FCC8 on 5 GHz, preserving the returned DFS region. No existing domain
   pair combines these. The compiled host mapping matches this combination.
 - With CONFIG_BAND_6GHZ and firmware 6 GHz capability present, the request
-  also supplies FCC1_6G_09 (0x09), the full-range LPI/SP super-domain used by
-  the existing US country entry. Firmware without that capability receives
+  supplies FCC1_6G_18. Firmware without that capability receives
   a 2.4/5 GHz request and a diagnostic, preserving those bands.
 
 For channel 14, firmware RF capabilities must include 2484 MHz and 802.11b.
 The driver allocates a replacement rule array, queues the per-band command,
 then appends a 2474–2494 MHz rule with 20 MHz bandwidth, 20 dBm power and
-NO_OFDM. Existing rules remain intact. Failed allocation, failed command
+NO_OFDM. After successful command submission it extends the base 2.4 GHz
+rule through 2482 MHz so channels 12/13 remain available with MKKA; the US
+base rule ends at channel 11. Existing power, bandwidth and flags remain
+intact. Failed allocation, failed command
 submission, unsupported RF capability or excessive rule counts leaves the
 original array unchanged and logs the reason. Per-PHY bookkeeping bounds
 command submission to once per country request, including repeated events.
@@ -53,7 +59,8 @@ The host database spans 5925–7125 MHz. Its LPI client rules split at
 claim that channel fits one 20 MHz rule. Actual firmware rules determine
 its usability; this profile does not replace 6 GHz power/PSD rules.
 
-Build/validation records: /home/loukious/Android/mowa-cfr/all-bands-20261009.
+Firmware tests: /home/loukious/Android/mowa-cfr/firmware-inspection-20261009/round3.
+Build/validation records: /home/loukious/Android/mowa-cfr/native-6ghz-20261009.
 Run the portable source tests from this WLAN repository root:
 
     python3 qcacld-3.0/tests/test-wide-channels.py
@@ -65,12 +72,22 @@ bookkeeping, power/flag preservation and MLME/scan overrides. The option
 requires CONFIG_REG_CLIENT=y. Set CONFIG_WLAN_WIDE_CHANNELS=n and rebuild
 to restore normal selection.
 
-The restarted phone still had the original ROM driver, SHA-256
-53679567e1977a410c761d80879dc4773bc8bd515e4d41a9fc35d5a6072c322d.
-Neither source profile has been loaded. After packaging the new driver
-into the ROM's boot-time module location and booting it, use adb.exe to
-check its module hash, kernel profile/channel-14 diagnostics, iw reg get,
-iw phy phy0 info, scan results and actual connection behavior.
+The previous installed profile requested 0x09/0x09 and enabled channel 14,
+but left every 6 GHz channel disabled. The corrected driver was packaged
+into vendor_dlkm_a and booted on 2026-10-09. Runtime tests with adb.exe
+verified all 59 standard 6 GHz channels enabled, channels 1–14 retained,
+and the same result after framework country updates. The firmware completed
+a passive scan at 5955 MHz and returned channel statistics. ASUS 5 GHz
+connectivity and internet remained functional; the native app recorded
+129 supported HE/VHT 80 MHz CFR records in its ten-second recording window.
+These results establish configuration and scan-path acceptance, but a
+6 GHz AP connection has not been tested.
+
+The 5.9 GHz service capability is a separate gate: firmware rules cover
+channels 169/173/177, but the installed firmware reports the service absent.
+This change does not invent that capability or modify signed firmware.
+The special lower 6 GHz edge channel (5935 MHz, channel 2) is also gated
+by its separate firmware service capability and remains disabled.
 
 Builds and host tests do not verify firmware acceptance or RF operation.
 Merely displaying 6 GHz entries in iw is insufficient. The sensing decoder

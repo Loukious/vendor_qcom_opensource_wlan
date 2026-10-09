@@ -80,7 +80,7 @@ tgt_if_apply_channel14_profile(struct cur_regulatory_info *info)
 	uint8_t pdev_id = info->phy_id;
 
 	if (info->status_code != REG_SET_CC_STATUS_PASS ||
-	    info->reg_dmn_pair != FCC8_WORLD)
+	    info->reg_dmn_pair != FCC15_FCCA)
 		return QDF_STATUS_SUCCESS;
 
 	if (info->phy_id >= PSOC_MAX_PHY_REG_CAP)
@@ -135,7 +135,7 @@ tgt_if_apply_channel14_profile(struct cur_regulatory_info *info)
 			tx_ops->get_pdev_id_from_phy_id(info->psoc, info->phy_id,
 						       &pdev_id);
 		params.pdev_id = pdev_id;
-		params.currentRDinuse = FCC8_WORLD;
+		params.currentRDinuse = FCC15_FCCA;
 		params.currentRD2G = reg_2g_sub_dmn_code[MKKA];
 		params.currentRD5G = reg_5g_sub_dmn_code[FCC8];
 		params.ctl_2G = CTL_MKK;
@@ -149,6 +149,12 @@ tgt_if_apply_channel14_profile(struct cur_regulatory_info *info)
 		}
 		soc_reg->wide_channel14_ctl_sent[info->phy_id] = true;
 	}
+
+	/* MKKA admits channels 12/13 as well as 14; the US base stops at 11. */
+	for (i = 0; i < count; i++)
+		if (rules[i].start_freq <= 2402 &&
+		    rules[i].end_freq >= 2472 && rules[i].end_freq < 2482)
+			rules[i].end_freq = 2482;
 
 	qdf_mem_free(info->reg_rules_2g_ptr);
 	info->reg_rules_2g_ptr = rules;

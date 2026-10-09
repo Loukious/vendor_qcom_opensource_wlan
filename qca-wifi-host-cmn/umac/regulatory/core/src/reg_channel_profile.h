@@ -9,9 +9,10 @@
 /**
  * reg_get_wide_channel_profile() - Make the compiled-in Onyx lab domain request
  *
- * FCC8_WORLD supplies the broad 5 GHz domain and channels 1-13. The target
- * interface separately programs MKKA for 2.4 GHz before adding the channel
- * 14 rule. FCC1_6G_09 requests the firmware's full-range 6 GHz LPI/SP domain.
+ * FCC15_FCCA with FCC1_6G_18 is the matching pair in the installed firmware's
+ * US database entry. Native firmware requests confirmed that FCC8_WORLD
+ * with either 6 GHz super-domain returns no 6 GHz rules. The target interface
+ * separately programs MKKA for 2.4 GHz before adding the channel 14 rule.
  * Firmware/BDF, DFS, AFC, indoor, SAR and power checks remain active.
  *
  * Return: The base domain request, including 6 GHz when compiled in.
@@ -21,9 +22,9 @@ static inline struct cc_regdmn_s reg_get_wide_channel_profile(void)
 	struct cc_regdmn_s rd = {0};
 
 	rd.flags = REGDMN_IS_SET;
-	rd.cc.regdmn.reg_2g_5g_pair_id = FCC8_WORLD;
+	rd.cc.regdmn.reg_2g_5g_pair_id = FCC15_FCCA;
 #ifdef CONFIG_BAND_6GHZ
-	rd.cc.regdmn.sixg_superdmn_id = FCC1_6G_09;
+	rd.cc.regdmn.sixg_superdmn_id = FCC1_6G_18;
 #endif
 	return rd;
 }
@@ -41,7 +42,7 @@ reg_cap_channel_profile_power(struct cur_regulatory_info *info)
 {
 	uint32_t i;
 
-	if (info->reg_dmn_pair != FCC8_WORLD)
+	if (info->reg_dmn_pair != FCC15_FCCA)
 		return;
 
 	for (i = 0; info->reg_rules_2g_ptr && i < info->num_2g_reg_rules; i++)
