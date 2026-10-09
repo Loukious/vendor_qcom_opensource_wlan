@@ -83,11 +83,37 @@ connectivity and internet remained functional; the native app recorded
 These results establish configuration and scan-path acceptance, but a
 6 GHz AP connection has not been tested.
 
-The 5.9 GHz service capability is a separate gate: firmware rules cover
-channels 169/173/177, but the installed firmware reports the service absent.
-This change does not invent that capability or modify signed firmware.
+The installed firmware reports the 5.9 GHz service absent, but its rules
+cover channels 169/173/177. Direct passive scan tests initially failed while
+those frequencies were absent from the firmware scan table. After a
+temporary table update, all three scans completed and returned channel
+statistics. The normal table was restored after the test.
+
+The compiled client lab profile therefore retains otherwise permitted
+5.9 GHz channels as passive (NO_IR) when regulatory data is offloaded and
+the current pair is FCC15_FCCA. It does not revive channels excluded by
+firmware rules, RF range, band selection, indoor policy or NOL. It preserves
+power/bandwidth/other flags, does not grant master mode even if that INI is
+enabled, and leaves the firmware capability bit unchanged. Ordinary profiles
+and targets with the capability present keep their existing behavior.
+This does not modify signed firmware or board data. Passive scanning is
+verified; association, transmission and CSI on these channels still need
+a compatible access point test. After installing the rebuilt module,
+ordinary iw passive scans at 5845/5865/5885 MHz all visited the requested
+frequency, returned statistics and completed. Framework US/GB updates and
+clearing the override preserve 14 enabled 2.4 GHz channels, 28 enabled
+5 GHz channels (169/173/177 passive), and 59 standard 6 GHz channels.
+Return probes still report the 5.9 GHz firmware capability as absent.
+ASUS 5260 MHz internet and app capture regression passed: 130 supported
+HE/VHT80 records in the ten-second recording window, none unsupported.
+Evidence is in
+/home/loukious/Android/mowa-cfr/5dot9-investigation-20261009.
 The special lower 6 GHz edge channel (5935 MHz, channel 2) is also gated
 by its separate firmware service capability and remains disabled.
+
+Run the passive 5.9 GHz filter tests with:
+
+    python3 qcacld-3.0/tests/test-wide-5dot9.py
 
 Builds and host tests do not verify firmware acceptance or RF operation.
 Merely displaying 6 GHz entries in iw is insufficient. The sensing decoder

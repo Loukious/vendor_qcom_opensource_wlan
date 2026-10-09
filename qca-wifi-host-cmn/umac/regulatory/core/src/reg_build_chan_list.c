@@ -1653,6 +1653,10 @@ reg_is_disabling_5dot9_needed(struct wlan_objmgr_psoc *psoc)
  * to FW. If service bit is set but ini enable_5dot9_ghz_chan_in_master_mode
  * is not set, it converts these channels to passive in FCC regulatory domain.
  * If both service bit and ini are set, the channels remain enabled.
+ * The compiled Onyx client lab profile can retain firmware-approved 5.9 GHz
+ * channels for passive scanning even when the service bit is absent. Native
+ * scans verified that this firmware accepts them once its scan table includes
+ * them. This does not enable master mode or change the advertised capability.
  */
 static void
 reg_modify_chan_list_for_5dot9_ghz_channels(struct wlan_objmgr_pdev *pdev,
@@ -1661,13 +1665,22 @@ reg_modify_chan_list_for_5dot9_ghz_channels(struct wlan_objmgr_pdev *pdev,
 {
 	enum channel_enum chan_enum;
 	struct wlan_objmgr_psoc *psoc;
+	bool wide_passive = false;
+#if defined(CONFIG_WLAN_WIDE_CHANNELS) && defined(CONFIG_REG_CLIENT)
+	struct wlan_regulatory_pdev_priv_obj *pdev_reg = reg_get_pdev_obj(pdev);
+#endif
 
 	psoc = wlan_pdev_get_psoc(pdev);
 
 	if (!reg_is_fcc_regdmn(pdev))
 		return;
 
-	if (reg_is_disabling_5dot9_needed(psoc)) {
+#if defined(CONFIG_WLAN_WIDE_CHANNELS) && defined(CONFIG_REG_CLIENT)
+	wide_passive = pdev_reg && pdev_reg->reg_dmn_pair == FCC15_FCCA &&
+		       reg_is_regdb_offloaded(psoc) &&
+		       !reg_is_5dot9_ghz_supported(psoc);
+#endif
+	if (reg_is_disabling_5dot9_needed(psoc) && !wide_passive) {
 		for (chan_enum = 0; chan_enum < NUM_CHANNELS; chan_enum++) {
 			if (reg_is_5dot9_ghz_freq(pdev, chan_list[chan_enum].
 						  center_freq)) {
@@ -1680,11 +1693,14 @@ reg_modify_chan_list_for_5dot9_ghz_channels(struct wlan_objmgr_pdev *pdev,
 		return;
 	}
 
-	if (reg_is_5dot9_ghz_chan_allowed_master_mode(pdev))
+	if (!wide_passive && reg_is_5dot9_ghz_chan_allowed_master_mode(pdev))
 		return;
 
 	for (chan_enum = 0; chan_enum < NUM_CHANNELS; chan_enum++) {
 		if (chan_list[chan_enum].chan_flags & REGULATORY_CHAN_DISABLED)
+			continue;
+		/* Retain prior RF-range, band, indoor and NOL exclusions. */
+		if (wide_passive && !reg_is_state_allowed(chan_list[chan_enum].state))
 			continue;
 
 		if (reg_is_5dot9_ghz_freq(pdev,
