@@ -1587,7 +1587,7 @@ wmi_unified_vdev_set_qdepth_thresh_cmd_send(
 	return QDF_STATUS_E_FAILURE;
 }
 
-#ifdef WLAN_REG_PARTIAL_OFFLOAD
+#if defined(WLAN_REG_PARTIAL_OFFLOAD) || defined(CONFIG_WLAN_WIDE_CHANNELS)
 QDF_STATUS wmi_unified_pdev_set_regdomain_cmd_send(
 			wmi_unified_t wmi_handle,
 			struct pdev_set_regdomain_params *param)

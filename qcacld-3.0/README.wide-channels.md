@@ -1,74 +1,78 @@
 # Onyx compiled channel profile
 
-The `sun_gki_wcn7750` profile enables `CONFIG_WLAN_WIDE_CHANNELS=y` for the
-Onyx lab build. This is a change inside `qca_cld3_wcn7750.ko`; it requires
-no boot script, country-code module parameter, app command, or INI override.
+The sun_gki_wcn7750 profile enables CONFIG_WLAN_WIDE_CHANNELS=y. This is
+inside qca_cld3_wcn7750.ko; it requires no boot script, INI edit, app command
+or module parameter. It covers startup, Android/11d country updates and
+firmware restart, using local requests without overwriting caller arguments.
 
-On driver startup, HDD uses the existing regulatory API to request
-`FCC8_WORLD` (`0x09`) from firmware. Both country-command paths in the target
-interface also select that domain, covering subsequent Android country
-updates, 11d updates, and restoration after a firmware restart. Requests use
-local structures: the original country arguments are not overwritten.
+The profile requests all three bands:
 
-The driver database pairs the WORLD 2.4 GHz domain (channels 1–13) with
-FCC8 on 5 GHz: channels 36–64, 100–144 and 149–177. This is a compiled lab
-domain selection, not an update to the Tunisia country database. Firmware
-must recognize the domain and return its channel rules; the host does not
-fabricate enabled channels or clear disabled flags after the fact.
+- Firmware FCC8_WORLD (0x09) supplies channels 1–13 and 5 GHz channels
+  36–64, 100–144 and 149–177.
+- Channel 14 uses WMI_PDEV_SET_REGDOMAIN_CMDID to request MKKA on 2.4 GHz
+  and FCC8 on 5 GHz, preserving the returned DFS region. No existing domain
+  pair combines these. The compiled host mapping matches this combination.
+- With CONFIG_BAND_6GHZ and firmware 6 GHz capability present, the request
+  also supplies FCC1_6G_09 (0x09), the full-range LPI/SP super-domain used by
+  the existing US country entry. Firmware without that capability receives
+  a 2.4/5 GHz request and a diagnostic, preserving those bands.
 
-The actual available set can be narrower than the database profile:
+For channel 14, firmware RF capabilities must include 2484 MHz and 802.11b.
+The driver allocates a replacement rule array, queues the per-band command,
+then appends a 2474–2494 MHz rule with 20 MHz bandwidth, 20 dBm power and
+NO_OFDM. Existing rules remain intact. Failed allocation, failed command
+submission, unsupported RF capability or excessive rule counts leaves the
+original array unchanged and logs the reason. Per-PHY bookkeeping bounds
+command submission to once per country request, including repeated events.
+Command submission is not an RF-operation acknowledgement. Channel 14
+remains experimental until a real scan/connection succeeds. Existing SME
+code selects 802.11b at 2484 MHz.
 
-- Hardware frequency ranges, firmware/BDF band and 5.9 GHz capability
-  checks remain active. Channels 169–177 also retain the existing passive
-  and indoor handling; support for them is not guaranteed.
-- DFS/radar, non-occupancy lists, indoor restrictions, bandwidth limits,
-  coexistence filtering, SAR, calibration and thermal handling remain active.
-  FCC8 selects the firmware's FCC DFS region instead of the TN ETSI region.
-- For firmware rules identifying FCC8_WORLD, both legacy and extended
-  channel-list events cap host regulatory power at the observed TN ceilings:
-  20 dBm for 2.4 GHz and 23 dBm for 5 GHz. Lower firmware limits are retained.
-  Board limits and SAR can impose additional reductions.
-- Channel 14, 4.9 GHz and 6 GHz are not enabled. The request's 6 GHz
-  super-domain is zero. This profile does not claim universal RF support.
+The profile enables all-band MLME selection, bypasses Xiaomi's platform
+2.4/5-only branch and OEM ranging restriction, and scans all 6 GHz channels
+instead of the Onyx INI's no-6-GHz mode. Firmware/BDF band and frequency
+capabilities, disabled channels, passive scan and 6 GHz security checks
+remain authoritative. Ordinary profiles retain their existing behavior.
 
-The option is enabled only in `sun_gki_wcn7750_defconfig`. To return to normal
-country selection, set `CONFIG_WLAN_WIDE_CHANNELS=n` there and rebuild, or
-pass that value on the direct kernel module make command. Other profiles
-leave the option unset and retain their normal country behavior.
+DFS/radar, non-occupancy lists, indoor and bandwidth limits, AFC,
+coexistence, SAR, calibration and thermal handling remain active. FCC8 uses
+firmware's FCC DFS region rather than TN's ETSI region. Legacy and extended
+channel-list events cap profile power at 20 dBm for 2.4 GHz and 23 dBm for
+5 GHz, or lower firmware limits. Firmware supplies 6 GHz power and PSD
+limits. This is a compiled lab profile, not a Tunisia database update.
+4.9 GHz is not added.
 
-Build and validation artifacts for the local change are in
-`/home/loukious/Android/mowa-cfr/wide-channels-20261009`. The full module build
-passed against the same ABI symbol tables used for the flashed ROM. The
-complete `__versions` table matches the earlier working module, and CFR
-streamfs/relay support remains in the binary. Host tests compile the actual
-changed request/startup functions with the feature enabled and disabled,
-exercise missing handles and firmware command failures, verify reference
-release and caller argument preservation, and check power caps without
-changing DFS/indoor flags or unrelated fields.
+6 GHz remains a hardware/firmware experiment. The
+[Xiaomi POCO F7 specification](https://www.mi.com/uk/product/poco-f7/specs/)
+lists 2.4/5 GHz, while the
+[Qualcomm Snapdragon 8s Gen 4 brief](https://www.qualcomm.com/content/dam/qcomm-martech/dm-assets/documents/Product-Brief-Snapdragon-8s-Gen-4.pdf)
+lists 2.4/5/6 GHz platform capability. Platform capability does not establish
+that this handset's RF components and board firmware implement 6 GHz.
+The host database spans 5925–7125 MHz. Its LPI client rules split at
+6875 MHz, inside channel 185, so the database coverage check does not
+claim that channel fits one 20 MHz rule. Actual firmware rules determine
+its usability; this profile does not replace 6 GHz power/PSD rules.
 
-Run the portable source checks from the WLAN repository root:
+Build/validation records: /home/loukious/Android/mowa-cfr/all-bands-20261009.
+Run the portable source tests from this WLAN repository root:
 
-```sh
-python3 qcacld-3.0/tests/test-wide-channels.py
-```
+    python3 qcacld-3.0/tests/test-wide-channels.py
 
-The ROM's Onyx INI also explicitly disables 6 GHz with `BandCapability=3`
-and `oem_6g_support_disable=1`. This change covers its existing 2.4/5 GHz
-bands; enabling and validating 6 GHz would require addressing that separate
-OEM configuration and confirming board/firmware support.
+Tests compile actual source with the option disabled, enabled without 6 GHz,
+and enabled with 6 GHz. They exercise command errors, allocation/ownership,
+RF gates, malformed counts, per-PHY routing, bounded re-entry, country-reset
+bookkeeping, power/flag preservation and MLME/scan overrides. The option
+requires CONFIG_REG_CLIENT=y. Set CONFIG_WLAN_WIDE_CHANNELS=n and rebuild
+to restore normal selection.
 
-Firmware acceptance and hotspot discovery have not been tested with this
-module loaded. After packaging it into the boot-time module location and
-booting the updated ROM, check with `adb.exe`:
+The restarted phone still had the original ROM driver, SHA-256
+53679567e1977a410c761d80879dc4773bc8bd515e4d41a9fc35d5a6072c322d.
+Neither source profile has been loaded. After packaging the new driver
+into the ROM's boot-time module location and booting it, use adb.exe to
+check its module hash, kernel profile/channel-14 diagnostics, iw reg get,
+iw phy phy0 info, scan results and actual connection behavior.
 
-```sh
-adb.exe -s 5493f3c6 shell 'su -c "dmesg | grep -i wide-channel"'
-adb.exe -s 5493f3c6 shell 'su -c "iw reg get; iw phy phy0 info"'
-adb.exe -s 5493f3c6 shell 'su -c "cmd wifi start-scan"'
-adb.exe -s 5493f3c6 shell 'su -c "cmd wifi list-scan-results"'
-```
-
-Confirm that `phy#0` has the broader channel rules, supported high channels
-are enabled, DFS flags and power caps remain, and the `PC` hotspot appears.
-If firmware rejects the domain or returns the original narrow list, the
-patch is not a verified channel unlock; retain the logs for diagnosis.
+Builds and host tests do not verify firmware acceptance or RF operation.
+Merely displaying 6 GHz entries in iw is insufficient. The sensing decoder
+currently handles the observed 80 MHz HE/VHT CFR formats; an 802.11b
+channel-14 connection is not that CSI format.

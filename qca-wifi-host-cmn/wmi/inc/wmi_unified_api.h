@@ -2713,7 +2713,7 @@ QDF_STATUS wmi_unified_vdev_set_qdepth_thresh_cmd_send(
 		wmi_unified_t wmi_handle,
 		struct set_qdepth_thresh_params *param);
 
-#ifdef WLAN_REG_PARTIAL_OFFLOAD
+#if defined(WLAN_REG_PARTIAL_OFFLOAD) || defined(CONFIG_WLAN_WIDE_CHANNELS)
 /**
  *  wmi_unified_pdev_set_regdomain_cmd_send() - WMI set regdomain function
  *  @wmi_handle: handle to WMI.

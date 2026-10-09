@@ -56,12 +56,35 @@ extern int get_hw_country_version(void);
 
 static inline bool mlme_xiaomi_hw_is_2g_5g_only(void)
 {
+#ifdef CONFIG_WLAN_WIDE_CHANNELS
+	/* Allow probing 6 GHz; the firmware/BDF still supplies RF capabilities. */
+	return false;
+#else
 	return get_hw_version_platform() == XIAOMI_HW_PLATFORM_2G_5G_ONLY;
+#endif
 }
 
 static inline bool mlme_xiaomi_hw_is_cn_build(void)
 {
 	return get_hw_country_version() == XIAOMI_HW_COUNTRY_CN;
+}
+
+static inline void
+mlme_apply_wide_channel_band_cfg(struct wlan_mlme_generic *gen)
+{
+#ifdef CONFIG_WLAN_WIDE_CHANNELS
+	gen->band_capability = REG_BAND_MASK_ALL;
+	gen->band = gen->band_capability;
+	mlme_info("Onyx wide-channel profile: enable 2.4/5/6 GHz band selection");
+#endif
+}
+
+static inline void
+mlme_apply_wide_channel_pos_cfg(struct wlan_mlme_wifi_pos_cfg *cfg)
+{
+#ifdef CONFIG_WLAN_WIDE_CHANNELS
+	cfg->oem_6g_support_disable = false;
+#endif
 }
 
 struct wlan_mlme_rx_ops *
@@ -1389,6 +1412,7 @@ static void mlme_init_generic_cfg(struct wlan_objmgr_psoc *psoc,
 		gen->band_capability = REG_BAND_MASK_ALL;
 	}
 	gen->band = gen->band_capability;
+	mlme_apply_wide_channel_band_cfg(gen);
 	gen->select_5ghz_margin =
 		cfg_get(psoc, CFG_SELECT_5GHZ_MARGIN);
 	gen->sub_20_chan_width =
@@ -3572,6 +3596,7 @@ static void mlme_init_wifi_pos_cfg(struct wlan_objmgr_psoc *psoc,
 		mlme_debug("replace ini oem_6g_support_disable=1");
 		wifi_pos_cfg->oem_6g_support_disable = true;
 	}
+	mlme_apply_wide_channel_pos_cfg(wifi_pos_cfg);
 	mlme_init_wifi_pos_11az_config(psoc, wifi_pos_cfg);
 }
 

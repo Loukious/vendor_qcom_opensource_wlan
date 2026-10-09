@@ -109,6 +109,10 @@ QDF_STATUS wlan_regulatory_psoc_obj_created_notification(
 		return QDF_STATUS_E_NOMEM;
 
 	soc_reg_obj->offload_enabled = false;
+#ifdef CONFIG_WLAN_WIDE_CHANNELS
+	qdf_mem_zero(soc_reg_obj->wide_channel14_ctl_sent,
+		     sizeof(soc_reg_obj->wide_channel14_ctl_sent));
+#endif
 	soc_reg_obj->psoc_ptr = psoc;
 	soc_reg_obj->dfs_enabled = true;
 	soc_reg_obj->band_capability = (BIT(REG_BAND_2G) | BIT(REG_BAND_5G) |

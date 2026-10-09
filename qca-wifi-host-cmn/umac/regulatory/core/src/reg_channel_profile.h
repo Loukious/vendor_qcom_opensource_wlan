@@ -9,13 +9,12 @@
 /**
  * reg_get_wide_channel_profile() - Make the compiled-in Onyx lab domain request
  *
- * FCC8_WORLD pairs channels 1-13 with the broad 5 GHz FCC8 domain. Request
- * this existing domain from firmware rather than editing disabled flags in
- * the host's channel list. Firmware/BDF capability checks and the normal
- * DFS, indoor, SAR and power handling still apply. This does not add channel
- * 14, 4.9 GHz or a 6 GHz super-domain, and is not a country database update.
+ * FCC8_WORLD supplies the broad 5 GHz domain and channels 1-13. The target
+ * interface separately programs MKKA for 2.4 GHz before adding the channel
+ * 14 rule. FCC1_6G_09 requests the firmware's full-range 6 GHz LPI/SP domain.
+ * Firmware/BDF, DFS, AFC, indoor, SAR and power checks remain active.
  *
- * Return: A domain request, with no 6 GHz super-domain enabled.
+ * Return: The base domain request, including 6 GHz when compiled in.
  */
 static inline struct cc_regdmn_s reg_get_wide_channel_profile(void)
 {
@@ -23,6 +22,9 @@ static inline struct cc_regdmn_s reg_get_wide_channel_profile(void)
 
 	rd.flags = REGDMN_IS_SET;
 	rd.cc.regdmn.reg_2g_5g_pair_id = FCC8_WORLD;
+#ifdef CONFIG_BAND_6GHZ
+	rd.cc.regdmn.sixg_superdmn_id = FCC1_6G_09;
+#endif
 	return rd;
 }
 

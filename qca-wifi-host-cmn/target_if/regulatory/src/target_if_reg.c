@@ -35,8 +35,127 @@
 #include <wlan_reg_ucfg_api.h>
 #include <wlan_utility.h>
 #include "reg_channel_profile.h"
+#ifdef CONFIG_WLAN_WIDE_CHANNELS
+#include "reg_priv_objs.h"
+#include "reg_db_parser.h"
+#endif
 #ifdef CONFIG_REG_CLIENT
 #include <wlan_dcs_tgt_api.h>
+#endif
+
+#ifdef CONFIG_WLAN_WIDE_CHANNELS
+static void
+tgt_if_reset_channel14_profile(struct wlan_objmgr_psoc *psoc)
+{
+	struct wlan_regulatory_psoc_priv_obj *soc_reg = reg_get_psoc_obj(psoc);
+
+	if (soc_reg)
+		qdf_mem_zero(soc_reg->wide_channel14_ctl_sent,
+			     sizeof(soc_reg->wide_channel14_ctl_sent));
+}
+
+/**
+ * tgt_if_apply_channel14_profile() - Program 2.4 GHz separately from 5/6 GHz
+ * @info: Successfully extracted firmware regulatory event
+ *
+ * No existing domain pair combines MKKA (channel 14) and FCC8 (broad 5 GHz).
+ * Use the per-band WMI command to request that combination, retaining the
+ * firmware-selected DFS region. Only publish the channel-14 rule after the
+ * command queues successfully and firmware's RF capabilities include it.
+ * Command submission is not a firmware acknowledgement of RF operation.
+ *
+ * Return: QDF status; failure leaves the firmware rule array unchanged.
+ */
+static QDF_STATUS
+tgt_if_apply_channel14_profile(struct cur_regulatory_info *info)
+{
+	struct wlan_regulatory_psoc_priv_obj *soc_reg;
+	struct wlan_psoc_host_hal_reg_capabilities_ext *caps;
+	struct wlan_lmac_if_reg_tx_ops *tx_ops;
+	struct pdev_set_regdomain_params params = {0};
+	struct cur_reg_rule *rules;
+	wmi_unified_t wmi_handle;
+	QDF_STATUS status;
+	uint32_t i, count = info->num_2g_reg_rules;
+	uint8_t pdev_id = info->phy_id;
+
+	if (info->status_code != REG_SET_CC_STATUS_PASS ||
+	    info->reg_dmn_pair != FCC8_WORLD)
+		return QDF_STATUS_SUCCESS;
+
+	if (info->phy_id >= PSOC_MAX_PHY_REG_CAP)
+		return QDF_STATUS_E_INVAL;
+
+	soc_reg = reg_get_psoc_obj(info->psoc);
+	caps = ucfg_reg_get_hal_reg_cap(info->psoc);
+	if (!soc_reg || !caps)
+		return QDF_STATUS_E_FAILURE;
+
+	caps += info->phy_id;
+	if (!(caps->wireless_modes & HOST_REGDMN_MODE_11B) ||
+	    caps->low_2ghz_chan > 2484 || caps->high_2ghz_chan < 2484) {
+		target_if_info("Onyx channel 14: excluded by firmware RF capabilities");
+		return QDF_STATUS_E_FAILURE;
+	}
+
+	if (count && !info->reg_rules_2g_ptr)
+		return QDF_STATUS_E_INVAL;
+
+	if (count >= MAX_REG_RULES ||
+	    info->num_5g_reg_rules >= MAX_REG_RULES - count)
+		return QDF_STATUS_E_INVAL;
+
+	for (i = 0; i < count; i++)
+		if (info->reg_rules_2g_ptr[i].start_freq <= 2474 &&
+		    info->reg_rules_2g_ptr[i].end_freq >= 2494)
+			return QDF_STATUS_SUCCESS;
+
+	rules = qdf_mem_malloc((count + 1) * sizeof(*rules));
+	if (!rules)
+		return QDF_STATUS_E_NOMEM;
+
+	if (count)
+		qdf_mem_copy(rules, info->reg_rules_2g_ptr,
+			     count * sizeof(*rules));
+	qdf_mem_zero(&rules[count], sizeof(*rules));
+	rules[count].start_freq = 2474;
+	rules[count].end_freq = 2494;
+	rules[count].max_bw = 20;
+	rules[count].reg_power = 20;
+	rules[count].flags = REGULATORY_CHAN_NO_OFDM;
+
+	if (!soc_reg->wide_channel14_ctl_sent[info->phy_id]) {
+		wmi_handle = get_wmi_unified_hdl_from_psoc(info->psoc);
+		if (!wmi_handle) {
+			qdf_mem_free(rules);
+			return QDF_STATUS_E_FAILURE;
+		}
+		tx_ops = target_if_regulatory_get_tx_ops(info->psoc);
+		if (tx_ops && tx_ops->get_pdev_id_from_phy_id)
+			tx_ops->get_pdev_id_from_phy_id(info->psoc, info->phy_id,
+						       &pdev_id);
+		params.pdev_id = pdev_id;
+		params.currentRDinuse = FCC8_WORLD;
+		params.currentRD2G = reg_2g_sub_dmn_code[MKKA];
+		params.currentRD5G = reg_5g_sub_dmn_code[FCC8];
+		params.ctl_2G = CTL_MKK;
+		params.ctl_5G = CTL_FCC;
+		params.dfsDomain = info->dfs_region;
+		status = wmi_unified_pdev_set_regdomain_cmd_send(wmi_handle,
+							      &params);
+		if (QDF_IS_STATUS_ERROR(status)) {
+			qdf_mem_free(rules);
+			return status;
+		}
+		soc_reg->wide_channel14_ctl_sent[info->phy_id] = true;
+	}
+
+	qdf_mem_free(info->reg_rules_2g_ptr);
+	info->reg_rules_2g_ptr = rules;
+	info->num_2g_reg_rules = count + 1;
+	target_if_info("Onyx channel 14: MKKA/FCC8 command queued; 802.11b rule added");
+	return QDF_STATUS_SUCCESS;
+}
 #endif
 
 /**
@@ -303,6 +422,11 @@ static int tgt_reg_chan_list_update_handler(ol_scn_t handle, uint8_t *event_buf,
 	}
 
 	reg_info->psoc = psoc;
+#ifdef CONFIG_WLAN_WIDE_CHANNELS
+	status = tgt_if_apply_channel14_profile(reg_info);
+	if (QDF_IS_STATUS_ERROR(status))
+		target_if_err("Onyx channel 14 request unavailable: %d", status);
+#endif
 	reg_cap_channel_profile_power(reg_info);
 
 	status = reg_rx_ops->master_list_handler(reg_info);
@@ -464,6 +588,11 @@ static int tgt_reg_chan_list_ext_update_handler(ol_scn_t handle,
 	}
 
 	reg_info->psoc = psoc;
+#ifdef CONFIG_WLAN_WIDE_CHANNELS
+	status = tgt_if_apply_channel14_profile(reg_info);
+	if (QDF_IS_STATUS_ERROR(status))
+		target_if_err("Onyx channel 14 request unavailable: %d", status);
+#endif
 	reg_cap_channel_profile_power(reg_info);
 
 	status = reg_rx_ops->master_list_ext_handler(reg_info);
@@ -680,8 +809,15 @@ static QDF_STATUS tgt_if_regulatory_set_country_code(
 	if (!country)
 		return QDF_STATUS_E_INVAL;
 
+#ifdef CONFIG_BAND_6GHZ
+	if (!tgt_if_regulatory_is_6ghz_supported(psoc)) {
+		rd.cc.regdmn.sixg_superdmn_id = 0;
+		target_if_info("Onyx 6 GHz: firmware capability absent; retain 2.4/5 GHz");
+	}
+#endif
 	target_if_info("Onyx wide-channel profile: country %.2s -> domain 0x%x",
 		       country->country, rd.cc.regdmn.reg_2g_5g_pair_id);
+	tgt_if_reset_channel14_profile(psoc);
 	return wmi_unified_set_user_country_code_cmd_send(wmi_handle,
 							country->pdev_id, &rd);
 #else
@@ -724,9 +860,16 @@ static QDF_STATUS tgt_if_regulatory_set_user_country_code(
 
 #ifdef CONFIG_WLAN_WIDE_CHANNELS
 	/* Keep the caller's country request and pending-event bookkeeping intact. */
+#ifdef CONFIG_BAND_6GHZ
+	if (!tgt_if_regulatory_is_6ghz_supported(psoc)) {
+		wide_rd.cc.regdmn.sixg_superdmn_id = 0;
+		target_if_info("Onyx 6 GHz: firmware capability absent; retain 2.4/5 GHz");
+	}
+#endif
 	target_if_info("Onyx wide-channel profile: request type %u -> domain 0x%x",
 		       rd->flags, wide_rd.cc.regdmn.reg_2g_5g_pair_id);
 	rd = &wide_rd;
+	tgt_if_reset_channel14_profile(psoc);
 #endif
 	status = wmi_unified_set_user_country_code_cmd_send(wmi_handle,
 							    pdev_id, rd);

@@ -244,6 +244,10 @@ struct wlan_regulatory_psoc_priv_obj {
 	struct wlan_objmgr_psoc *psoc_ptr;
 	bool new_user_ctry_pending[PSOC_MAX_PHY_REG_CAP];
 	bool new_init_ctry_pending[PSOC_MAX_PHY_REG_CAP];
+#ifdef CONFIG_WLAN_WIDE_CHANNELS
+	/* Bound channel-14 CTL programming to once per country request/PHY. */
+	bool wide_channel14_ctl_sent[PSOC_MAX_PHY_REG_CAP];
+#endif
 	bool new_11d_ctry_pending[PSOC_MAX_PHY_REG_CAP];
 	bool world_country_pending[PSOC_MAX_PHY_REG_CAP];
 	bool dfs_enabled;

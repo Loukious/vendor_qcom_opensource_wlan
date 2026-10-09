@@ -935,7 +935,12 @@ const struct reg_domain_pair g_reg_dmn_pairs[] = {
 	{FCC6_WORLD, FCC6, WORLD},
 	{FCC6_FCCA, FCC6, FCCA},
 	{FCC8_FCCA, FCC8, FCCA},
+#ifdef CONFIG_WLAN_WIDE_CHANNELS
+	/* Match the independent MKKA/FCC8 per-band firmware request. */
+	{FCC8_WORLD, FCC8, MKKA},
+#else
 	{FCC8_WORLD, FCC8, WORLD},
+#endif
 	{FCC10_FCCA, FCC10, FCCA},
 	{FCC11_WORLD, FCC11, WORLD},
 	{FCC13_WORLD, FCC13, WORLD},

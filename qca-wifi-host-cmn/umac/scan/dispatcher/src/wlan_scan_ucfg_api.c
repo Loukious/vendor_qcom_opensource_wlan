@@ -42,6 +42,15 @@
 #include "cfg_ucfg_api.h"
 #include "wlan_extscan_api.h"
 
+static inline void
+wlan_scan_apply_wide_channel_cfg(struct wlan_scan_obj *scan_obj)
+{
+#if defined(CONFIG_WLAN_WIDE_CHANNELS) && defined(CONFIG_BAND_6GHZ)
+	scan_obj->scan_def.scan_mode_6g = SCAN_MODE_6G_ALL_CHANNEL;
+	scan_obj->scan_def.skip_6g_and_indoor_freq = false;
+#endif
+}
+
 QDF_STATUS ucfg_scan_register_bcn_cb(struct wlan_objmgr_psoc *psoc,
 	update_beacon_cb cb, enum scan_cb_type type)
 {
@@ -827,6 +836,7 @@ wlan_scan_global_init(struct wlan_objmgr_psoc *psoc,
 
 	scan_obj->scan_def.skip_6g_and_indoor_freq =
 		cfg_get(psoc, CFG_SKIP_6GHZ_AND_INDOOR_FREQ_SCAN);
+	wlan_scan_apply_wide_channel_cfg(scan_obj);
 	scan_obj->scan_def.last_scan_ageout_time =
 		cfg_get(psoc, CFG_LAST_SCAN_AGEOUT_TIME);
 	scan_obj->aux_mac_support = false;
