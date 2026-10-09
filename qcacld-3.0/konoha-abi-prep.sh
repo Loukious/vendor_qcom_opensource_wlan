@@ -70,6 +70,9 @@ cache_ok() {
 		&& -d "$SRC_DIR" && -s "$OUT_DIR/Module.symvers" \
 		&& -f "$OUT_DIR/include/config/kernel.release" \
 		&& "$(cat "$OUT_DIR/include/config/kernel.release")" == "$KONOHA_KERNEL_RELEASE" \
+		&& -f "$OUT_DIR/.config" \
+		&& "$(grep -c '^CONFIG_RELAY=y$' "$OUT_DIR/.config")" == 1 \
+		&& "$(grep -c '^CONFIG_DEBUG_FS=y$' "$OUT_DIR/.config")" == 1 \
 		&& -s "$ABI_DIR/.prepared-symvers-sha256" ]] || return 1
 	[[ "$(sha256sum "$OUT_DIR/Module.symvers")" == "$(cat "$ABI_DIR/.prepared-symvers-sha256")" ]]
 }
@@ -175,6 +178,8 @@ KCONFIG_CONFIG="$OUT_DIR/.config" \
 "$SRC_DIR/scripts/config" --file "$OUT_DIR/.config" \
 	--set-str LOCALVERSION "$KERNEL_LOCALVERSION" \
 	--disable LOCALVERSION_AUTO \
+	--enable RELAY \
+	--enable DEBUG_FS \
 	--disable KUNIT
 make -j"$(nproc)" -C "$SRC_DIR" O="$OUT_DIR" \
 	ARCH=arm64 LLVM=1 LLVM_IAS=1 LOCALVERSION= \
