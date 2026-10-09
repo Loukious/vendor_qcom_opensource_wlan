@@ -143,6 +143,9 @@ CONFIG_QCOM_TDLS=y
 CONFIG_QCOM_VOWIFI_11R=y
 CONFIG_QMI_SUPPORT=y
 CONFIG_REG_CLIENT=y
+# Onyx lab build: select FCC8_WORLD in firmware at startup and country updates.
+# Firmware/BDF, DFS, SAR and transmit-power checks remain authoritative.
+CONFIG_WLAN_WIDE_CHANNELS=y
 CONFIG_REMOVE_PKT_LOG=y
 CONFIG_REO_DESC_DEFER_FREE=y
 CONFIG_ROME_IF="ipci"

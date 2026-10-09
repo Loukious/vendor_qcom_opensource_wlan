@@ -144,6 +144,7 @@
 #include "nan_ucfg_api.h"
 #include "wlan_reg_ucfg_api.h"
 #include "reg_services_common.h"
+#include "reg_channel_profile.h"
 #include "wlan_hdd_afc.h"
 #include "wlan_dfs_ucfg_api.h"
 #include "wlan_hdd_rx_monitor.h"
@@ -4673,6 +4674,20 @@ static void hdd_skip_acs_scan_timer_deinit(struct hdd_context *hdd_ctx) {}
  */
 int hdd_update_country_code(struct hdd_context *hdd_ctx)
 {
+#ifdef CONFIG_WLAN_WIDE_CHANNELS
+	struct cc_regdmn_s rd = reg_get_wide_channel_profile();
+	QDF_STATUS status;
+
+	/* Apply on every driver startup, even without a country_code parameter. */
+	if (ucfg_reg_is_regdb_offloaded(hdd_ctx->psoc)) {
+		hdd_info("Onyx wide-channel profile: startup domain 0x%x",
+			 rd.cc.regdmn.reg_2g_5g_pair_id);
+		status = ucfg_reg_program_cc(hdd_ctx->pdev, &rd);
+		return qdf_status_to_os_return(status);
+	}
+
+	hdd_err("Onyx wide-channel profile requires firmware regulatory offload");
+#endif
 	if (!country_code ||
 	    !ucfg_reg_is_user_country_set_allowed(hdd_ctx->psoc))
 		return 0;

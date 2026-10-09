@@ -34,6 +34,7 @@
 #include <target_if_reg_lte.h>
 #include <wlan_reg_ucfg_api.h>
 #include <wlan_utility.h>
+#include "reg_channel_profile.h"
 #ifdef CONFIG_REG_CLIENT
 #include <wlan_dcs_tgt_api.h>
 #endif
@@ -302,6 +303,7 @@ static int tgt_reg_chan_list_update_handler(ol_scn_t handle, uint8_t *event_buf,
 	}
 
 	reg_info->psoc = psoc;
+	reg_cap_channel_profile_power(reg_info);
 
 	status = reg_rx_ops->master_list_handler(reg_info);
 	if (status != QDF_STATUS_SUCCESS) {
@@ -462,6 +464,7 @@ static int tgt_reg_chan_list_ext_update_handler(ol_scn_t handle,
 	}
 
 	reg_info->psoc = psoc;
+	reg_cap_channel_profile_power(reg_info);
 
 	status = reg_rx_ops->master_list_ext_handler(reg_info);
 	if (!QDF_IS_STATUS_SUCCESS(status)) {
@@ -664,11 +667,26 @@ static QDF_STATUS tgt_if_regulatory_set_country_code(
 	struct wlan_objmgr_psoc *psoc, void *arg)
 {
 	wmi_unified_t wmi_handle = get_wmi_unified_hdl_from_psoc(psoc);
+#ifdef CONFIG_WLAN_WIDE_CHANNELS
+	struct set_country *country = arg;
+	struct cc_regdmn_s rd = reg_get_wide_channel_profile();
+#endif
 
 	if (!wmi_handle)
 		return QDF_STATUS_E_FAILURE;
 
+#ifdef CONFIG_WLAN_WIDE_CHANNELS
+	/* Cover framework/11d changes and restoration after firmware restart. */
+	if (!country)
+		return QDF_STATUS_E_INVAL;
+
+	target_if_info("Onyx wide-channel profile: country %.2s -> domain 0x%x",
+		       country->country, rd.cc.regdmn.reg_2g_5g_pair_id);
+	return wmi_unified_set_user_country_code_cmd_send(wmi_handle,
+							country->pdev_id, &rd);
+#else
 	return wmi_unified_set_country_cmd_send(wmi_handle, arg);
+#endif
 }
 
 /**
@@ -685,9 +703,17 @@ static QDF_STATUS tgt_if_regulatory_set_user_country_code(
 	struct wlan_objmgr_pdev *pdev;
 	wmi_unified_t wmi_handle;
 	QDF_STATUS status;
+#ifdef CONFIG_WLAN_WIDE_CHANNELS
+	struct cc_regdmn_s wide_rd = reg_get_wide_channel_profile();
+#endif
+
+	if (!rd)
+		return QDF_STATUS_E_INVAL;
 
 	pdev = wlan_objmgr_get_pdev_by_id(psoc, pdev_id,
 					  WLAN_REGULATORY_NB_ID);
+	if (!pdev)
+		return QDF_STATUS_E_FAILURE;
 
 	wmi_handle = get_wmi_unified_hdl_from_pdev(pdev);
 
@@ -696,6 +722,12 @@ static QDF_STATUS tgt_if_regulatory_set_user_country_code(
 		goto free_pdevref;
 	}
 
+#ifdef CONFIG_WLAN_WIDE_CHANNELS
+	/* Keep the caller's country request and pending-event bookkeeping intact. */
+	target_if_info("Onyx wide-channel profile: request type %u -> domain 0x%x",
+		       rd->flags, wide_rd.cc.regdmn.reg_2g_5g_pair_id);
+	rd = &wide_rd;
+#endif
 	status = wmi_unified_set_user_country_code_cmd_send(wmi_handle,
 							    pdev_id, rd);
 	if (QDF_IS_STATUS_ERROR(status))
