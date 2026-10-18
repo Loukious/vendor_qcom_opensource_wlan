@@ -117,3 +117,20 @@ production C helper using synthetic DMA buffers under GCC UBSan. It
 exercises a 512-bin payload containing zero, one, 256 and 65535 as well
 as the four-report rate limit. A normal Wi-Fi boot will not create a
 fingerprint unless a genuine Spectral DMA completion is delivered.
+
+### GEN3 signed FFT peak bin index (2026-10-19)
+
+The WCN7750 firmware FFT V2 header reports a **signed** peak bin offset
+from the center. Prior GEN3 host code decoded this offset into
+`fft_peak_sidx` but never populated the outgoing SAMP `max_index`, so it
+was always zero. The archived mode-3 512-bin record with header
+`hdr_a=0x1007e0` yields offset `+2`, matching the actual exported bin
+maximum at index `512/2+2 = 258`. SAMP stores `spectral_max_index` as
+`int16_t` (even though the intermediate params field is `uint16_t`).
+
+`test_gen3_peak_index.py` verifies the output propagation in both old and
+optimized SAMP paths, including secondary-80 reporting. It compiles the
+production conversion helper with GCC UBSan to verify two's-complement
+preservation for positive and negative offsets. This is a **metadata-only
+host fix**; it does not alter RF, FFT DMA, firmware configuration, power
+scaling, or scan behavior and cannot fix the all-zero FFT captures.

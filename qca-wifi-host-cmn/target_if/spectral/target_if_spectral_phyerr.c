@@ -2351,6 +2351,15 @@ target_if_spectral_get_bin_count_after_len_adj(
 	return fft_bin_count;
 }
 
+/* GEN3 FFT peak_sidx is a signed bin offset around the FFT center.
+ * SAMP carries spectral_max_index as int16_t, but the intervening params
+ * structure uses uint16_t. Preserve the original 16-bit bit pattern.
+ */
+static uint16_t target_if_spectral_gen3_peak_sidx_to_samp(int32_t peak_sidx)
+{
+	return (uint16_t)(int16_t)peak_sidx;
+}
+
 #ifndef OPTIMIZED_SAMP_MESSAGE
 /**
  * target_if_process_sfft_report_gen3() - Process Search FFT Report for gen3
@@ -3469,6 +3478,8 @@ target_if_spectral_populate_samp_params_gen3(
 	params->reset_delay = report->reset_delay;
 
 	params->max_mag = p_sfft->fft_peak_mag;
+	params->max_index = target_if_spectral_gen3_peak_sidx_to_samp(
+					p_sfft->fft_peak_sidx);
 
 	spectral_mode = target_if_get_spectral_mode(params->hw_detector_id,
 						    &spectral->rparams);
@@ -3949,6 +3960,8 @@ target_if_consume_spectral_report_gen3(
 		}
 
 		params.max_mag  = p_sfft->fft_peak_mag;
+		params.max_index = target_if_spectral_gen3_peak_sidx_to_samp(
+						p_sfft->fft_peak_sidx);
 
 		params.freq = p_sops->get_current_channel(spectral,
 							  spectral_mode);
@@ -4126,7 +4139,9 @@ target_if_consume_spectral_report_gen3(
 			report->noisefloor[chn_idx_lowest_enabled];
 
 		params.max_mag_sec80        = p_sfft->fft_peak_mag;
-		/* params.max_index_sec80      = p_sfft->peak_inx; */
+		params.max_index_sec80 =
+			target_if_spectral_gen3_peak_sidx_to_samp(
+						p_sfft->fft_peak_sidx);
 		/* XXX Does this definition of datalen *still hold? */
 		params.datalen_sec80        = fft_hdr_length * 4;
 		params.pwr_count_sec80      = fft_bin_count;
