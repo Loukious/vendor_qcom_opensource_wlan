@@ -100,3 +100,20 @@ missing `dbr_len` and the host synthesized `spectral_data_len`. This patch
 only adds a pre-parse memory-safety check; it does not change firmware WMI
 configuration, enable RF scans or force a firmware assertion, and it does
 **not** establish that FFT magnitudes are calibrated or nonzero.
+
+### WCN7750 GEN3 raw-bin fingerprint (first four valid reports)
+
+The production callback now records at most **four** compact, bounded
+fingerprints of **raw 16-bit** FFT values before byte swapping or SAMP
+8-bit saturation. It runs only after the existing direct DMA allocation
+bounds check and only when report format V2 and firmware bin width 2 are
+in use. Each line includes word count, zero/one/>255 counts, maximum,
+first/middle/last values, FNV-1a hash, FFT length word, and buffer
+capacity. It contains **no arbitrary raw buffer dump**, does not change
+WMI scan configuration, and does not activate or assert the firmware.
+
+`test_gen3_raw_bin_fingerprint.py` compiles and runs the extracted
+production C helper using synthetic DMA buffers under GCC UBSan. It
+exercises a 512-bin payload containing zero, one, 256 and 65535 as well
+as the four-report rate limit. A normal Wi-Fi boot will not create a
+fingerprint unless a genuine Spectral DMA completion is delivered.

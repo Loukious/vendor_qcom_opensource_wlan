@@ -17,6 +17,7 @@
  * PERFORMANCE OF THIS SOFTWARE.
  */
 
+#include <linux/atomic.h>
 #include <osdep.h>
 #include <qdf_types.h>
 #include <qdf_module.h>
@@ -4220,6 +4221,76 @@ static bool target_if_spectral_gen3_dbr_report_fits(
 	return true;
 }
 
+/* Log at most four valid, bounded 16-bit DMA FFT fingerprints per boot. */
+#define SPECTRAL_GEN3_FINGERPRINT_LIMIT 4
+static atomic_t spectral_gen3_fingerprint_reports = ATOMIC_INIT(0);
+
+static void target_if_spectral_gen3_raw_bin_fingerprint(
+	struct target_if_spectral *spectral,
+	const struct direct_buf_rx_data *payload)
+{
+	const uint8_t *raw = payload->vaddr;
+	const struct spectral_phyerr_fft_report_gen3 *fft;
+	size_t offset, payload_bytes, raw_bins, i;
+	uint32_t fft_len, hash = 2166136261U;
+	uint32_t zeros = 0, ones = 0, over_255 = 0, max_index = 0;
+	uint16_t peak = 0, first = 0, middle = 0, last = 0, v;
+	int sample;
+
+	/* WCN7750 GEN3 V2 uses 16-bit raw bin magnitudes. */
+	if (spectral->rparams.version != SPECTRAL_REPORT_FORMAT_VERSION_2 ||
+	    spectral->rparams.hw_fft_bin_width != 2 ||
+	    atomic_read(&spectral_gen3_fingerprint_reports) >=
+				SPECTRAL_GEN3_FINGERPRINT_LIMIT)
+		return;
+
+	/* The caller has already checked the full TLV against buf_capacity. */
+	offset = sizeof(struct spectral_sscan_summary_report_gen3) +
+		 spectral->rparams.ssummary_padding_bytes;
+	fft = (const struct spectral_phyerr_fft_report_gen3 *)(raw + offset);
+	fft_len = get_bitfield(qdf_le32_to_cpu(fft->fft_hdr_lts),
+			SPECTRAL_REPORT_LTS_HDR_LENGTH_SIZE_GEN3,
+			SPECTRAL_REPORT_LTS_HDR_LENGTH_POS_GEN3) * 4;
+	if (fft_len < sizeof(*fft) ||
+	    fft_len > payload->buf_capacity - offset)
+		return;
+
+	payload_bytes = fft_len - sizeof(*fft);
+	raw_bins = payload_bytes / 2;
+	if (!raw_bins)
+		return;
+
+	sample = atomic_inc_return(&spectral_gen3_fingerprint_reports);
+	if (sample > SPECTRAL_GEN3_FINGERPRINT_LIMIT)
+		return;
+
+	for (i = 0; i < raw_bins; i++) {
+		qdf_mem_copy(&v, fft->buf + i * 2, sizeof(v));
+		v = qdf_le16_to_cpu(v);
+		zeros += v == 0;
+		ones += v == 1;
+		over_255 += v > 255;
+		if (v > peak) {
+			peak = v;
+			max_index = i;
+		}
+		if (!i)
+			first = v;
+		if (i == raw_bins / 2)
+			middle = v;
+		if (i == raw_bins - 1)
+			last = v;
+		hash = (hash ^ (uint8_t)v) * 16777619U;
+		hash = (hash ^ (uint8_t)(v >> 8)) * 16777619U;
+	}
+
+	spectral_info("GEN3 raw16 fingerprint #%d: bins %zu zeros %u ones %u gt255 %u peak %u index %u first/mid/last %u/%u/%u fnv32 %08x fft_lts %08x capacity %zu",
+		      sample, raw_bins, zeros, ones, over_255,
+		      peak, max_index, first, middle, last, hash,
+		      qdf_le32_to_cpu(fft->fft_hdr_lts),
+		      payload->buf_capacity);
+}
+
 int target_if_spectral_process_report_gen3(
 	struct wlan_objmgr_pdev *pdev,
 	void *buf)
@@ -4244,6 +4315,9 @@ int target_if_spectral_process_report_gen3(
 		spectral_err_rl("GEN3 FFT TLV does not fit allocated DBR buffer");
 		return -EINVAL;
 	}
+
+	/* Fingerprint raw words before FFT interpretation or 8-bit clamping. */
+	target_if_spectral_gen3_raw_bin_fingerprint(spectral, payload);
 
 	report.data = payload->vaddr;
 	if (payload->meta_data_valid) {

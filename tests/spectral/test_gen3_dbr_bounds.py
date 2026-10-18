@@ -27,7 +27,7 @@ class TestGen3DbrBounds(unittest.TestCase):
     def test_extracted_real_helper_with_sanitizers(self):
         source=PHY.read_text()
         start=source.index('static bool target_if_spectral_gen3_dbr_report_fits(')
-        stop=source.index('\nint target_if_spectral_process_report_gen3(',start)
+        stop=source.index('/* Log at most four valid, bounded 16-bit DMA FFT fingerprints per boot. */',start)
         function=source[start:stop]
         self.assertIn('sizeof(*fft) > payload->buf_capacity - fft_offset',function)
         self.assertIn('fft_hdr_length > payload->buf_capacity - fft_offset',function)
