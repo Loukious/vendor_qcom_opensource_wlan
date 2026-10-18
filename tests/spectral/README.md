@@ -14,6 +14,17 @@ injects WMI failures and missing-vdev failures. No radio or device is used.
 The harness does not verify firmware behavior, the entire kernel integration,
 or asynchronous report/timer behavior. Kbuild remains required.
 
+`test_finite_completion.py` compiles the actual completion and stop functions
+against a fake host/WMI sink. On WCN7750, completing the requested finite
+report count clears the local active/enabled cache before notifying userspace.
+This reflects firmware's finite-completion stop and avoids a redundant WMI
+stop. Partial completion and other targets keep their existing state; failed
+userspace notification still retires the completed scan. The harness also
+checks that an immediate stop emits no WMI writes after this completion.
+The two controlled no-host-stop tests remained crash-free for about 44 seconds
+each, but this source correction still needs device validation after Kbuild.
+It does not repair the observed zero FFT bins.
+
 The source correction addresses host defects found during WCN7750 spectral
 debugging:
 

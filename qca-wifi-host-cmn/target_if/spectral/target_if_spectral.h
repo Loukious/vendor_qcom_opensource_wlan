@@ -1456,6 +1456,8 @@ struct target_if_spectral {
 	struct spectral_data_stats data_stats;
 	struct target_if_spectral_scan_timer
 				spectral_timer[SPECTRAL_SCAN_MODE_MAX];
+	/* Firmware disables processing when its finite report count expires. */
+	bool finite_scan_auto_disables;
 };
 
 /**

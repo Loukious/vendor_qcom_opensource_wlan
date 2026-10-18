@@ -3992,6 +3992,10 @@ target_if_pdev_spectral_init(struct wlan_objmgr_pdev *pdev)
 		return NULL;
 	}
 
+	/* WCN7750 firmware clears trigger and enable on finite completion. */
+	spectral->finite_scan_auto_disables =
+					target_type == TARGET_TYPE_WCN7750;
+
 	/* init the function ptr table */
 	target_if_spectral_init_dummy_function_table(spectral);
 
@@ -8611,6 +8615,27 @@ target_if_spectral_finite_scan_update(struct target_if_spectral *spectral,
 	if (!finite_scan->num_reports_expected) {
 		uint32_t received_reports = finite_scan->num_reports_requested;
 
+		finite_scan->finite_spectral_scan = false;
+		finite_scan->is_scan_complete = true;
+
+#if ATH_PERF_PWR_OFFLOAD
+		if (spectral->finite_scan_auto_disables) {
+			struct target_if_spectral_param_state_info *info;
+
+			/*
+			 * Firmware already stopped this finite capture. Leaving the
+			 * cache active rejects the next start; leaving it enabled
+			 * makes a later stop send a redundant trigger clear/disable.
+			 * Update locally, without sending another WMI command.
+			 */
+			info = &spectral->param_info[smode];
+			qdf_spin_lock_bh(&info->osps_lock);
+			info->osps_cache.osc_spectral_active = 0;
+			info->osps_cache.osc_spectral_enabled = 0;
+			qdf_spin_unlock_bh(&info->osps_lock);
+		}
+#endif
+
 		sptrl_event.event_id = SPECTRAL_SCAN_COMPLETE;
 
 		compl_event.completion_status = SPECTRAL_SCAN_COMPLETE_SUCCESS;
@@ -8626,8 +8651,6 @@ target_if_spectral_finite_scan_update(struct target_if_spectral *spectral,
 			  ("Failed to notify finite spectral scan completion");
 		}
 
-		finite_scan->finite_spectral_scan =  false;
-		finite_scan->is_scan_complete =  true;
 	}
 
 	return status;
