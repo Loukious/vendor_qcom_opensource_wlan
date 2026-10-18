@@ -85,3 +85,18 @@ transferred in a particular DMA completion. The WMI release TLV has no
 usable payload length. This diagnostic does not enable RF scanning, debug
 poisoning, firmware asserts or active tracing; it runs during normal ring
 configuration, and it doesn't change the WMI command sent to firmware.
+
+### GEN3 spectral direct DMA buffer bounds
+
+`test_gen3_dbr_bounds.py` extracts the **actual production C bounds-check
+helper** and runs it under GCC/UBSan with a 2,048-byte ring, 16-byte V2
+padding, 24-byte FFT header and 512 x 2-byte bins. It also verifies
+undersized allocations, missing buffers and impossible/oversized TLV
+lengths are rejected, while valid 1,088-byte and 2,048-byte cases pass.
+
+`direct_buf_rx_data.buf_capacity` is sourced from the DMA ring allocation
+(`min_buf_size`) and remains **independent** of the WMI release TLV's
+missing `dbr_len` and the host synthesized `spectral_data_len`. This patch
+only adds a pre-parse memory-safety check; it does not change firmware WMI
+configuration, enable RF scans or force a firmware assertion, and it does
+**not** establish that FFT magnitudes are calibrated or nonzero.

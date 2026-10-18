@@ -1994,7 +1994,9 @@ static QDF_STATUS target_if_get_dbr_data(struct wlan_objmgr_pdev *pdev,
 	dbr_data->paddr = paddr;
 	direct_buf_rx_debug("Cookie = %d Vaddr look up = %pK",
 			    dbr_data->cookie, dbr_data->vaddr);
+	/* The WMI release entry may not contain a DMA payload length. */
 	dbr_data->dbr_len = dbr_rsp->dbr_entries[idx].len;
+	dbr_data->buf_capacity = dbr_ring_cap->min_buf_size;
 	qdf_mem_unmap_nbytes_single(dbr_psoc_obj->osdev, (qdf_dma_addr_t)paddr,
 				    QDF_DMA_FROM_DEVICE,
 				    dbr_ring_cap->min_buf_size);

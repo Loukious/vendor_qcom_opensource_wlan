@@ -84,7 +84,8 @@ struct wlan_lmac_if_tx_ops;
 #ifdef WMI_DBR_SUPPORT
 /**
  * struct direct_buf_rx_data - direct buffer rx data
- * @dbr_len: Length of the buffer DMAed
+ * @dbr_len: Firmware-provided DMA length (may be absent on this target)
+ * @buf_capacity: Actual DMA allocation size, independent of dbr_len
  * @vaddr: Virtual address of the buffer that has DMAed data
  * @cookie: Cookie for the buffer rxed from target
  * @paddr: physical address of buffer corresponding to vaddr
@@ -99,6 +100,7 @@ struct wlan_lmac_if_tx_ops;
  */
 struct direct_buf_rx_data {
 	size_t dbr_len;
+	size_t buf_capacity;
 	void *vaddr;
 	uint32_t cookie;
 	qdf_dma_addr_t paddr;

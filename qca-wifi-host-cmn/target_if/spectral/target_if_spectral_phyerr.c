@@ -4178,6 +4178,48 @@ fail_no_print:
 }
 #endif /* OPTIMIZED_SAMP_MESSAGE */
 
+/**
+ * target_if_spectral_gen3_dbr_report_fits() - Check raw GEN3 TLV bounds
+ * @spectral: Spectral report parameters, including V2 summary padding
+ * @payload: Direct DMA buffer with allocation size from the DBR ring caps
+ *
+ * The WMI release TLV does not expose the transferred byte count on WCN7750.
+ * Never use the unset dbr_len or the synthesized SAMP spectral_data_len as
+ * a memory boundary. Bound the firmware's embedded FFT length by the actual
+ * allocation before the summary/FFT parsers read anything from that buffer.
+ */
+static bool target_if_spectral_gen3_dbr_report_fits(
+	struct target_if_spectral *spectral,
+	const struct direct_buf_rx_data *payload)
+{
+	size_t fft_offset;
+	uint32_t fft_hdr_length;
+	const struct spectral_phyerr_fft_report_gen3 *fft;
+
+	if (!payload || !payload->vaddr || !payload->buf_capacity)
+		return false;
+
+	fft_offset = sizeof(struct spectral_sscan_summary_report_gen3) +
+		     spectral->rparams.ssummary_padding_bytes;
+
+	/* The fixed FFT header must fit before its length word can be read. */
+	if (fft_offset > payload->buf_capacity ||
+	    sizeof(*fft) > payload->buf_capacity - fft_offset)
+		return false;
+
+	fft = (const struct spectral_phyerr_fft_report_gen3 *)
+		((const uint8_t *)payload->vaddr + fft_offset);
+	fft_hdr_length = get_bitfield(qdf_le32_to_cpu(fft->fft_hdr_lts),
+			SPECTRAL_REPORT_LTS_HDR_LENGTH_SIZE_GEN3,
+			SPECTRAL_REPORT_LTS_HDR_LENGTH_POS_GEN3) * 4;
+
+	if (fft_hdr_length < spectral->rparams.fft_report_hdr_len ||
+	    fft_hdr_length > payload->buf_capacity - fft_offset)
+		return false;
+
+	return true;
+}
+
 int target_if_spectral_process_report_gen3(
 	struct wlan_objmgr_pdev *pdev,
 	void *buf)
@@ -4198,6 +4240,11 @@ int target_if_spectral_process_report_gen3(
 	spectral_dp_stats = &spectral->data_stats;
 	spectral_dp_stats->spectral_rx_events++;
 
+	if (!target_if_spectral_gen3_dbr_report_fits(spectral, payload)) {
+		spectral_err_rl("GEN3 FFT TLV does not fit allocated DBR buffer");
+		return -EINVAL;
+	}
+
 	report.data = payload->vaddr;
 	if (payload->meta_data_valid) {
 		qdf_mem_copy(report.noisefloor, payload->meta_data.noisefloor,
@@ -4211,12 +4258,13 @@ int target_if_spectral_process_report_gen3(
 
 	if (spectral_debug_level & (DEBUG_SPECTRAL2 | DEBUG_SPECTRAL4)) {
 		spectral_debug("Printing the spectral phyerr buffer for debug");
-		spectral_debug("Datalength of buffer = 0x%zx(%zd) bufptr = 0x%pK",
-			       payload->dbr_len,
+		spectral_debug("DBR allocation = %zu, WMI length = %zu, bufptr = 0x%pK",
+			       payload->buf_capacity,
 			       payload->dbr_len,
 			       payload->vaddr);
 		target_if_spectral_hexdump((unsigned char *)payload->vaddr,
-					   1024);
+					   qdf_min(payload->buf_capacity,
+						   (size_t)1024));
 	}
 
 	samp_msg_index = spectral->spectral_sent_msg;
