@@ -75,3 +75,13 @@ release TLV only transports a physical address, and the host decoder
 never populates the intermediate `len` field. Diagnose actual payloads
 using the embedded GEN3 FFT report length; do not reject zero dbr_len
 or assume it denotes no DMA transfer.
+
+### Spectral ring-buffer capacity audit
+
+`test_dbr_capacity_audit.py` validates a one-time informational trace when
+Qualcomm configures the Spectral DMA ring. The logged `buf_size` is the
+**allocated and firmware-advertised ring-buffer capacity**, not bytes
+transferred in a particular DMA completion. The WMI release TLV has no
+usable payload length. This diagnostic does not enable RF scanning, debug
+poisoning, firmware asserts or active tracing; it runs during normal ring
+configuration, and it doesn't change the WMI command sent to firmware.

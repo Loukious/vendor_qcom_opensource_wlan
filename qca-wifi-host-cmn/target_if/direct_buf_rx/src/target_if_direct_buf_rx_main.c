@@ -1671,6 +1671,19 @@ static QDF_STATUS target_if_dbr_cfg_tgt(struct wlan_objmgr_pdev *pdev,
 			    dbr_cfg_req.event_timeout_ms);
 	status = wmi_unified_dbr_ring_cfg(wmi_hdl, &dbr_cfg_req);
 
+	/*
+	 * WMI DMA release entries contain buffer addresses, not the
+	 * number of bytes firmware wrote. Record the independently
+	 * advertised ring allocation capacity, without claiming that it
+	 * represents the payload length of any spectral FFT report.
+	 * Log only for spectral, on ring configuration (not per FFT).
+	 */
+	if (mod_param->mod_id == DBR_MODULE_SPECTRAL)
+		direct_buf_rx_info(
+			"Spectral DBR capacity: pdev %u buf_size %u num_elems %u cfg_status %d",
+			dbr_cfg_req.pdev_id, dbr_cfg_req.buf_size,
+			dbr_cfg_req.num_elems, status);
+
 	return status;
 }
 
