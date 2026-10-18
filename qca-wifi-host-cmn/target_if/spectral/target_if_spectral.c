@@ -547,6 +547,8 @@ target_if_send_vdev_spectral_configure_cmd(struct target_if_spectral *spectral,
 	struct wlan_objmgr_pdev *pdev = NULL;
 	struct wlan_objmgr_vdev *vdev = NULL;
 	struct target_if_psoc_spectral *psoc_spectral;
+	uint8_t vdev_chainmask;
+	QDF_STATUS status;
 
 	if (!spectral || !param || !(spectral->pdev_obj)) {
 		spectral_err("null params: spectral %pK, spectral_config %pK, pdev: %pK.",
@@ -570,11 +572,12 @@ target_if_send_vdev_spectral_configure_cmd(struct target_if_spectral *spectral,
 
 	vdev = target_if_spectral_get_vdev(spectral, smode);
 	if (!vdev)
-		return QDF_STATUS_E_NOENT;
+		return qdf_status_to_os_return(QDF_STATUS_E_NOENT);
 
 	qdf_mem_zero(&sparam, sizeof(sparam));
 
 	sparam.vdev_id = wlan_vdev_get_id(vdev);
+	vdev_chainmask = wlan_vdev_mlme_get_rxchainmask(vdev);
 	wlan_objmgr_vdev_release_ref(vdev, WLAN_SPECTRAL_ID);
 
 	sparam.count = param->ss_count;
@@ -596,13 +599,26 @@ target_if_send_vdev_spectral_configure_cmd(struct target_if_spectral *spectral,
 	sparam.bin_scale = param->ss_bin_scale;
 	sparam.dbm_adj = param->ss_dbm_adj;
 	sparam.chn_mask = param->ss_chn_mask;
+	/* A get-config query can cache defaults before HDD sets the vdev mask. */
+	if (!sparam.chn_mask)
+		sparam.chn_mask = vdev_chainmask;
+	if (!vdev_chainmask || !sparam.chn_mask ||
+	    (sparam.chn_mask & ~vdev_chainmask)) {
+		spectral_err("Invalid Spectral Rx chain mask 0x%x (vdev 0x%x)",
+			     sparam.chn_mask, vdev_chainmask);
+		return qdf_status_to_os_return(QDF_STATUS_E_INVAL);
+	}
 	sparam.mode = smode;
 	sparam.center_freq1 = param->ss_frequency.cfreq1;
 	sparam.center_freq2 = param->ss_frequency.cfreq2;
 	sparam.chan_width = param->ss_bandwidth;
 
-	return psoc_spectral->wmi_ops.wmi_spectral_configure_cmd_send(
+	status = psoc_spectral->wmi_ops.wmi_spectral_configure_cmd_send(
 				GET_WMI_HDL_FROM_PDEV(pdev), &sparam);
+	if (QDF_IS_STATUS_SUCCESS(status))
+		param->ss_chn_mask = sparam.chn_mask;
+
+	return qdf_status_to_os_return(status);
 }
 
 /**
@@ -631,6 +647,7 @@ target_if_send_vdev_spectral_enable_cmd(struct target_if_spectral *spectral,
 	struct wlan_objmgr_pdev *pdev = NULL;
 	struct wlan_objmgr_vdev *vdev = NULL;
 	struct target_if_psoc_spectral *psoc_spectral;
+	QDF_STATUS status;
 
 	if (!spectral) {
 		spectral_err("spectral is null");
@@ -658,7 +675,7 @@ target_if_send_vdev_spectral_enable_cmd(struct target_if_spectral *spectral,
 
 	vdev = target_if_spectral_get_vdev(spectral, smode);
 	if (!vdev)
-		return QDF_STATUS_E_NOENT;
+		return qdf_status_to_os_return(QDF_STATUS_E_NOENT);
 
 	qdf_mem_zero(&param, sizeof(param));
 
@@ -671,8 +688,10 @@ target_if_send_vdev_spectral_enable_cmd(struct target_if_spectral *spectral,
 	param.enabled = is_spectral_enabled;
 	param.mode = smode;
 
-	return psoc_spectral->wmi_ops.wmi_spectral_enable_cmd_send(
+	status = psoc_spectral->wmi_ops.wmi_spectral_enable_cmd_send(
 				GET_WMI_HDL_FROM_PDEV(pdev), &param);
+
+	return qdf_status_to_os_return(status);
 }
 
 /**
@@ -4779,6 +4798,7 @@ _target_if_set_spectral_config(struct target_if_spectral *spectral,
 	bool is_bw_supported;
 	struct wlan_objmgr_vdev *vdev;
 	enum phy_ch_width op_bw;
+	int config_ret;
 
 	if (!err) {
 		spectral_err("Error code argument is null");
@@ -5093,7 +5113,11 @@ _target_if_set_spectral_config(struct target_if_spectral *spectral,
 		break;
 	}
 
-	p_sops->configure_spectral(spectral, sparams, smode);
+	config_ret = p_sops->configure_spectral(spectral, sparams, smode);
+	if (config_ret) {
+		spectral_err("Failed to configure Spectral: %d", config_ret);
+		return qdf_status_from_os_return(config_ret);
+	}
 	/* only to validate the writes */
 	p_sops->get_spectral_config(spectral, &params, smode);
 	return QDF_STATUS_SUCCESS;
@@ -5475,6 +5499,7 @@ target_if_spectral_scan_enable_params(struct target_if_spectral *spectral,
 	QDF_STATUS status;
 	struct wlan_objmgr_pdev *pdev;
 	struct wlan_objmgr_psoc *psoc;
+	int ret;
 
 	if (!spectral) {
 		spectral_err("Spectral LMAC object is NULL");
@@ -5758,7 +5783,11 @@ target_if_spectral_scan_enable_params(struct target_if_spectral *spectral,
 			return 1;
 		}
 
-		p_sops->configure_spectral(spectral, spectral_params, smode);
+		ret = p_sops->configure_spectral(spectral, spectral_params, smode);
+		if (ret) {
+			spectral_err("Failed to configure Spectral before start: %d", ret);
+			return 1;
+		}
 		spectral->rparams.marker[smode].is_valid = false;
 
 		if (spectral->params[smode].ss_count) {
@@ -5769,7 +5798,11 @@ target_if_spectral_scan_enable_params(struct target_if_spectral *spectral,
 				return 1;
 			}
 		}
-		p_sops->start_spectral_scan(spectral, smode, err);
+		ret = p_sops->start_spectral_scan(spectral, smode, err);
+		if (ret) {
+			spectral_err("Failed to start Spectral: %d", ret);
+			return 1;
+		}
 		spectral->timestamp_war.timestamp_war_offset[smode] = 0;
 		spectral->timestamp_war.last_fft_timestamp[smode] = 0;
 	}
@@ -6557,12 +6590,20 @@ target_if_start_spectral_scan(struct wlan_objmgr_pdev *pdev,
 		}
 	}
 
-	target_if_spectral_scan_enable_params(spectral,
+	ret = target_if_spectral_scan_enable_params(spectral,
 					      &spectral->params[smode], smode,
 					      err);
+	if (ret)
+		spectral->finite_scan[smode].finite_spectral_scan = false;
 
 	spectral->sscan_width_configured[smode] = false;
 	qdf_spin_unlock_bh(&spectral->spectral_lock);
+
+	/* Timer cancellation must happen outside spectral_lock. */
+	if (ret) {
+		target_if_spectral_scan_cancel_timer(spectral, smode);
+		return QDF_STATUS_E_FAILURE;
+	}
 
 	return QDF_STATUS_SUCCESS;
 }

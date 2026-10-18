@@ -65,6 +65,7 @@ static int __wlan_hdd_cfg80211_spectral_scan_start(struct wiphy *wiphy,
 	struct net_device *dev = wdev->netdev;
 	struct hdd_adapter *adapter;
 	struct wlan_objmgr_vdev *vdev;
+	QDF_STATUS status;
 
 	hdd_enter();
 
@@ -88,10 +89,15 @@ static int __wlan_hdd_cfg80211_spectral_scan_start(struct wiphy *wiphy,
 		hdd_err("can't get vdev");
 		return -EINVAL;
 	}
-	wlan_spectral_update_rx_chainmask(adapter->deflink);
+	status = wlan_spectral_update_rx_chainmask(adapter->deflink);
+	if (QDF_IS_STATUS_ERROR(status)) {
+		ret = qdf_status_to_os_return(status);
+		goto release_vdev;
+	}
 	ret = wlan_cfg80211_spectral_scan_config_and_start(wiphy, hdd_ctx->pdev,
 							   vdev, data,
 							   data_len);
+release_vdev:
 	hdd_objmgr_put_vdev_by_user(vdev, WLAN_OSIF_SPECTRAL_ID);
 	hdd_exit();
 
@@ -632,14 +638,22 @@ wlan_spectral_update_rx_chainmask(struct wlan_hdd_link_info *link_info)
 	uint8_t pdev_id;
 	struct wlan_objmgr_vdev *vdev;
 	struct hdd_context *hdd_ctx = WLAN_HDD_GET_CTX(link_info->adapter);
+	QDF_STATUS status;
 
 	home_chan_freq = hdd_get_link_info_home_channel(link_info);
 	pdev_id = wlan_objmgr_pdev_get_pdev_id(hdd_ctx->pdev);
-	wma_get_rx_chainmask(pdev_id, &chainmask_2g, &chainmask_5g);
+	status = wma_get_rx_chainmask(pdev_id, &chainmask_2g, &chainmask_5g);
+	if (QDF_IS_STATUS_ERROR(status))
+		return status;
 	chainmask = chainmask_5g;
 
 	if (wlan_reg_is_24ghz_ch_freq(home_chan_freq))
 		chainmask = chainmask_2g;
+
+	if (!chainmask) {
+		hdd_err("No Spectral Rx chain available for frequency %u", home_chan_freq);
+		return QDF_STATUS_E_INVAL;
+	}
 
 	hdd_debug("chan freq %d chainmask %d", home_chan_freq, chainmask);
 	vdev = hdd_objmgr_get_vdev_by_user(link_info, WLAN_OSIF_SPECTRAL_ID);
