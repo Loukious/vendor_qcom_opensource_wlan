@@ -47,3 +47,16 @@ firmware acknowledgement. Do not use a successful CI build as evidence that
 the current firmware is safe to scan, and do not hot-replace the permanent
 WLAN module. Deployment needs a separately reviewed boot/recovery plan and
 an ABI comparison with the installed modules.
+
+### WCN7750 mode-2 in-band FFT length hypothesis
+
+`test_wcn7750_inband_bins.py` validates the experimental WCN7750-only
+`inband_fftbin_size_adj` flag and the existing report-mode-2 conditional.
+This branch is based on the separate *untested on-device* finite-completion
+revision (`b38a22e`). Earlier mode-2 FFT9 capture exported 512 bins, but
+all 74 clipped 255-valued samples were in the upper half; mode 3 had no
+clipped values. This resembles Qualcomm's documented report-mode-2 condition
+where firmware DMA-transfers only in-band bins despite a full advertised
+length. Neither source tests nor successful compilation prove the WCN7750
+firmware requires this adjustment. Do not flash this build merely because
+CI passed; assess descriptor lengths and the independent completion change.

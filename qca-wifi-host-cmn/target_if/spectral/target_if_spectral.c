@@ -3520,6 +3520,14 @@ target_if_spectral_len_adj_swar_init(struct spectral_fft_bin_len_adj_swar *swar,
 		swar->null_fftbin_adj = 0;
 	}
 
+	/*
+	 * On WCN7750 in report mode 2, only in-band FFT bins may be
+	 * DMA-transferred while the reported hardware length counts all bins.
+	 * Keep the mode-1 null-bin workaround unchanged until validated.
+	 */
+	if (target_type == TARGET_TYPE_WCN7750)
+		swar->inband_fftbin_size_adj = 1;
+
 	if (target_type == TARGET_TYPE_QCA8074V2)
 		swar->packmode_fftbin_size_adj = 1;
 	else
