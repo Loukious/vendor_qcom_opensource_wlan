@@ -60,3 +60,18 @@ where firmware DMA-transfers only in-band bins despite a full advertised
 length. Neither source tests nor successful compilation prove the WCN7750
 firmware requires this adjustment. Do not flash this build merely because
 CI passed; assess descriptor lengths and the independent completion change.
+
+### FFT bin-size memory safety and missing WMI DBR length
+
+`test_fft_bin_size_storage.py` verifies the size_t output of
+`target_if_spectral_get_bin_count_after_len_adj()` is stored in a genuine
+`size_t` temporary before converting to the `uint8_t` field. The previous
+`(size_t *)&p_sfft->fft_bin_size` writes eight bytes starting at offset 60,
+corrupting four bytes of the neighboring bin pointer at offset 64 (64-bit).
+
+`test_wcn7750_dbr_length_semantics.py` verifies why `dbr_len=0` in the
+spectral callback is not evidence of zero actual RF samples: the WMI DMA
+release TLV only transports a physical address, and the host decoder
+never populates the intermediate `len` field. Diagnose actual payloads
+using the embedded GEN3 FFT report length; do not reject zero dbr_len
+or assume it denotes no DMA transfer.

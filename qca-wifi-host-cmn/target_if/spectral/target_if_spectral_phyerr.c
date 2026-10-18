@@ -3213,6 +3213,7 @@ target_if_process_sfft_report_gen3(
 	int32_t peak_sidx = 0;
 	int32_t peak_mag;
 	int fft_hdr_length = 0;
+	size_t fft_bin_size;
 	uint32_t tstamp;
 	struct target_if_spectral_ops *p_sops;
 	enum spectral_scan_mode spectral_mode;
@@ -3377,12 +3378,17 @@ target_if_process_sfft_report_gen3(
 				FFT_REPORT_HDR_C_RELATIVE_PWR_SIZE_GEN3,
 				FFT_REPORT_HDR_C_RELATIVE_PWR_POS_GEN3);
 
+	/*
+	 * fft_bin_size is a u8 in p_sfft. The helper writes a size_t,
+	 * so passing its address as a size_t * clobbers the adjacent
+	 * bin_pwr_data pointer on 64-bit targets. Use an actual size_t.
+	 */
 	p_sfft->fft_bin_count =
 		target_if_spectral_get_bin_count_after_len_adj(
 			fft_hdr_length - spectral->rparams.fft_report_hdr_len,
 			spectral->params[spectral_mode].ss_rpt_mode,
-			&spectral->len_adj_swar,
-			(size_t *)&p_sfft->fft_bin_size);
+			&spectral->len_adj_swar, &fft_bin_size);
+	p_sfft->fft_bin_size = (uint8_t)fft_bin_size;
 
 	p_sfft->bin_pwr_data = (uint8_t *)p_fft_report + SPECTRAL_FFT_BINS_POS;
 
