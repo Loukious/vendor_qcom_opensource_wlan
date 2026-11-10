@@ -1797,6 +1797,7 @@ struct dp_rx_page_pool {
 	size_t base_pool_size;
 	qdf_atomic_t update_in_progress;
 	qdf_timer_t pool_inactivity_timer;
+	qdf_work_t pool_inactivity_work;
 	qdf_list_t inactive_list;
 	bool page_pool_init;
 };
