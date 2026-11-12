@@ -20,7 +20,7 @@ options qca_cld3_wcn7750 sta_monitor_coexist=1 ap_monitor_coexist=1 sta_ap_monit
 ```
 
 A matched native Onyx installation loaded the qualified driver and all three
-options after fastbootd flashing and reboot with the optional KernelSU WLAN
+options after fastbootd flashing and reboot with the optional KernelSU Next WLAN
 manager removed. Wi-Fi reconnected with background scanning enabled. The
 Android 17 / 6.18 kernel port maintains its own ABI adaptations and matching
 image layout; this driver branch still requires a compatible kernel build.
